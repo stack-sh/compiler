@@ -34,11 +34,24 @@ Install [`cargo-llvm-cov`](https://github.com/taiki-e/cargo-llvm-cov) before run
 
 Package-level Clippy lints reject panic-producing `unwrap`, `expect`, `panic`, `unreachable`, `todo`, and `unimplemented` calls in library and test targets.
 
+## Conformance
+
+The language-independent schemas and fixtures live in [`stack-sh/specification`](https://github.com/stack-sh/specification). This repository records its tested specification commit in [`tests/specification-revision`](./tests/specification-revision).
+
+Run the canonical suite against a local specification checkout:
+
+```sh
+STACK_SPECIFICATION_DIR=../specification cargo test --features conformance --test conformance
+```
+
+JSON support is development-only and does not add a runtime dependency to the compiler library. CI checks out the recorded specification revision before running the suite.
+
 ## Architecture
 
 - [`docs/decisions/0001-build-a-portable-rust-compiler-core.md`](./docs/decisions/0001-build-a-portable-rust-compiler-core.md)
 - [`docs/decisions/0002-separate-syntax-ast-from-normalized-ir.md`](./docs/decisions/0002-separate-syntax-ast-from-normalized-ir.md)
 - [`docs/decisions/0003-use-a-handwritten-parser.md`](./docs/decisions/0003-use-a-handwritten-parser.md)
+- [`docs/decisions/0004-consume-a-pinned-conformance-suite.md`](./docs/decisions/0004-consume-a-pinned-conformance-suite.md)
 - [`docs/specs/compiler-frontend.md`](./docs/specs/compiler-frontend.md)
 
 ## License

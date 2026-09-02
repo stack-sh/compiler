@@ -16,6 +16,21 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
 
+      - name: Read supported specification revision
+        id: specification
+        shell: bash
+        run: |
+          grep -Eq '^[0-9a-f]{40}$' tests/specification-revision
+          revision=$(tr -d '\n' < tests/specification-revision)
+          printf 'revision=%s\n' "$revision" >> "$GITHUB_OUTPUT"
+
+      - name: Check out canonical specification
+        uses: actions/checkout@v7
+        with:
+          repository: stack-sh/specification
+          ref: ${{ steps.specification.outputs.revision }}
+          path: .stack-specification
+
       - name: Install latest stable Rust toolchain
         run: rustup toolchain install stable --profile minimal --component clippy,rustfmt,llvm-tools-preview
 
@@ -24,6 +39,11 @@ jobs:
 
       - name: Run tests
         run: cargo +stable test
+
+      - name: Run canonical conformance suite
+        env:
+          STACK_SPECIFICATION_DIR: .stack-specification
+        run: cargo +stable test --features conformance --test conformance
 
       - name: Run Clippy
         run: cargo +stable clippy --all-targets --all-features -- -D warnings

@@ -35,6 +35,8 @@ src/validation/     Focused validation unit tests
 src/ir.rs           Renderer-independent normalized model
 src/lib.rs          Public parse and compile APIs
 tests/              Public API and conformance-oriented tests
+tests/specification-revision
+                    Exact canonical specification revision tested by CI
 docs/decisions/     Architectural decisions
 ```
 
@@ -71,7 +73,7 @@ match operator {
 
 - Unit tests cover lexer escapes, positions, parser productions, defaults, and each implemented diagnostic.
 - Integration tests exercise public `parse` and `compile` APIs.
-- Valid fixtures mirror the canonical specification examples.
+- Feature-gated integration tests execute the canonical conformance suite from the recorded specification revision.
 - Invalid cases assert stable diagnostic codes rather than entire prose messages.
 - Library unit-test line, function, and region coverage must each remain at or above 95 percent.
 - Every compiler change must pass formatting, tests, coverage, Clippy, and documentation builds.
@@ -102,7 +104,7 @@ match operator {
 
 ## Initial Success Criteria
 
-- All four canonical Stack examples parse and compile.
+- All valid cases in the pinned canonical conformance suite parse and compile.
 - Specification-defined defaults appear in normalized IR.
 - UTF-8, BOM, invalid string, syntax, name-resolution, semantic, layout-scope, and complexity diagnostics use their assigned codes.
 - Independent semantic errors are collected in one validation pass.
@@ -117,4 +119,4 @@ match operator {
 - Theme and icon resolution
 - Layout and renderer integration
 - Multi-error syntax recovery
-- Stable serialization schema and package versioning
+- Native Rust API stabilization and package versioning

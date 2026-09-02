@@ -16,6 +16,7 @@ The canonical language contract is `stack-sh/specification`. Never introduce syn
 
 - Format: `cargo fmt --check`
 - Test: `cargo test`
+- Conformance: `STACK_SPECIFICATION_DIR=../specification cargo test --features conformance --test conformance`
 - Unit-test coverage: `cargo llvm-cov --lib --all-features --workspace --fail-under-lines 95 --fail-under-functions 95 --fail-under-regions 95`
 - Lint: `cargo clippy --all-targets --all-features -- -D warnings`
 - Documentation: `cargo doc --no-deps`

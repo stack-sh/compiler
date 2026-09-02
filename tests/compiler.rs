@@ -1,50 +1,20 @@
 use stack_compiler::{compile, compile_bytes, diagnostic::Severity, ir};
 
-const VALID_EXAMPLES: &[(&str, &str)] = &[
-    ("minimal", include_str!("fixtures/valid/01-minimal.stack")),
-    (
-        "node semantics",
-        include_str!("fixtures/valid/02-node-semantics.stack"),
-    ),
-    (
-        "groups and layout",
-        include_str!("fixtures/valid/03-groups-and-layout.stack"),
-    ),
-    (
-        "commerce platform",
-        include_str!("fixtures/valid/04-commerce-platform.stack"),
-    ),
-];
-
 #[test]
-fn canonical_examples_compile_without_diagnostics() {
-    for (name, source) in VALID_EXAMPLES {
-        let output = compile(source);
-        assert!(
-            output.diagnostics.is_empty(),
-            "{name}: {:?}",
-            output.diagnostics
-        );
-        assert!(output.diagram.is_some(), "{name}");
-    }
-}
-
-#[test]
-fn canonical_commerce_example_has_expected_normalized_shape() {
-    let output = compile(VALID_EXAMPLES[3].1);
+fn public_api_applies_defaults_to_a_valid_document() {
+    let output = compile("stack 1.0 diagram \"API\" { node api \"API\" }");
     assert!(output.diagram.is_some(), "{:?}", output.diagnostics);
     let Some(diagram) = output.diagram else {
         return;
     };
 
     assert_eq!(diagram.theme_id, "default");
-    assert_eq!(diagram.nodes.len(), 13);
-    assert_eq!(diagram.groups.len(), 5);
-    assert_eq!(diagram.edges.len(), 12);
-    assert_eq!(
-        diagram.layout.as_ref().and_then(|layout| layout.direction),
-        Some(ir::Direction::Right),
-    );
+    assert_eq!(diagram.nodes.len(), 1);
+    let Some(node) = diagram.nodes.first() else {
+        return;
+    };
+    assert_eq!(node.kind, ir::NodeKind::Service);
+    assert!(diagram.edges.is_empty());
 }
 
 #[test]
