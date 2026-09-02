@@ -13,6 +13,17 @@ categories = ["parser-implementations"]
 [lib]
 path = "src/lib.rs"
 
+[features]
+conformance = []
+
+[[test]]
+name = "conformance"
+path = "tests/conformance.rs"
+required-features = ["conformance"]
+
+[dev-dependencies]
+serde_json = "1.0.151"
+
 [lints.clippy]
 expect_used = "deny"
 panic = "deny"
