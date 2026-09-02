@@ -1,0 +1,22 @@
+[package]
+name = "stack-compiler"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "Apache-2.0"
+description = "Reference compiler frontend for the Stack diagram language"
+repository = "https://github.com/stack-sh/compiler"
+readme = "README.md"
+keywords = ["stack", "diagram", "dsl", "compiler"]
+categories = ["parser-implementations"]
+
+[lib]
+path = "src/lib.rs"
+
+[lints.clippy]
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+unwrap_used = "deny"
