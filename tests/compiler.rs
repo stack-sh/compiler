@@ -1,5 +1,6 @@
 use stack_compiler::{
-    compile, compile_bytes, diagnostic::Severity, ir, lossless::TokenKind, parse_lossless,
+    compile, compile_bytes, compile_with_source_map, diagnostic::Severity, ir, lossless::TokenKind,
+    parse_lossless, source_map::SourceOrigin,
 };
 
 #[test]
@@ -85,6 +86,33 @@ fn public_lossless_api_reconstructs_authored_source() {
     assert!(document.tokens().iter().any(
         |token| matches!(&token.kind, TokenKind::String(value) if value == "A")
             && token.text == "\"\\u0041\""
+    ));
+}
+
+#[test]
+fn public_source_map_api_distinguishes_authored_and_default_values() {
+    let source = concat!(
+        "stack 1.0\n",
+        "diagram \"Mapped\" {\n",
+        "  node api \"API\" { icon \"service\" }\n",
+        "  node worker \"Worker\"\n",
+        "  layout { order [api, worker] }\n",
+        "}\n",
+    );
+    let output = compile_with_source_map(source);
+    assert!(output.diagnostics.is_empty());
+    let Some(source_map) = output.source_map else {
+        return;
+    };
+
+    assert!(matches!(
+        source_map.node_icon("api"),
+        Some(SourceOrigin::Authored(_))
+    ));
+    assert_eq!(source_map.node_icon("worker"), Some(SourceOrigin::Omitted));
+    assert!(matches!(
+        source_map.diagram_order(),
+        SourceOrigin::Authored(_)
     ));
 }
 

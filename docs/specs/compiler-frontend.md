@@ -31,6 +31,7 @@ src/diagnostic.rs   Portable diagnostic types and codes
 src/lexer.rs        UTF-8 text tokenization
 src/lossless.rs     Exact tokens, trivia, authored text, and spans
 src/parser.rs       Recursive-descent grammar implementation
+src/source_map.rs   Engine-facing source origins by semantic identity
 src/validation.rs   Semantic validation and normalization
 src/validation/     Focused validation unit tests
 src/ir.rs           Renderer-independent normalized model
@@ -50,11 +51,15 @@ pub fn parse_lossless(source: &str) -> LosslessParseOutput;
 pub fn parse_lossless_bytes(source: &[u8]) -> LosslessParseOutput;
 pub fn compile(source: &str) -> CompileOutput;
 pub fn compile_bytes(source: &[u8]) -> CompileOutput;
+pub fn compile_with_source_map(source: &str) -> SourceMappedCompileOutput;
+pub fn compile_bytes_with_source_map(source: &[u8]) -> SourceMappedCompileOutput;
 ```
 
 `ParseOutput` contains an AST only when decoding, lexing, and parsing succeed. `CompileOutput` contains normalized IR only when all compiler-stage errors are absent. Both outputs contain diagnostics. Semantic warnings may accompany successful IR.
 
 `LosslessParseOutput` contains an exact token-and-trivia document only when decoding, lexing, and syntax parsing succeed. Its tokens retain original text and spans, while string tokens additionally expose decoded values. Reconstructing the document concatenates every token and trivia segment without normalization. Semantic validation remains a separate stage.
+
+`SourceMappedCompileOutput` pairs successful normalized IR with a Rust-only source map. The sidecar identifies authored theme and icon values and complete layout order statements, while explicitly distinguishing omitted defaults. Compiler-stage errors suppress both IR and the source map. The normalized IR types and canonical JSON schema contain no source-map fields.
 
 ## Code Style
 
