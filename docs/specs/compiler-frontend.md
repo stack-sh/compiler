@@ -29,6 +29,7 @@ The primary users are Stack CLI, browser, editor, layout, and hosted-service imp
 src/ast.rs          Syntax-oriented AST and spans
 src/diagnostic.rs   Portable diagnostic types and codes
 src/lexer.rs        UTF-8 text tokenization
+src/lossless.rs     Exact tokens, trivia, authored text, and spans
 src/parser.rs       Recursive-descent grammar implementation
 src/validation.rs   Semantic validation and normalization
 src/validation/     Focused validation unit tests
@@ -45,11 +46,15 @@ docs/decisions/     Architectural decisions
 ```rust
 pub fn parse(source: &str) -> ParseOutput;
 pub fn parse_bytes(source: &[u8]) -> ParseOutput;
+pub fn parse_lossless(source: &str) -> LosslessParseOutput;
+pub fn parse_lossless_bytes(source: &[u8]) -> LosslessParseOutput;
 pub fn compile(source: &str) -> CompileOutput;
 pub fn compile_bytes(source: &[u8]) -> CompileOutput;
 ```
 
 `ParseOutput` contains an AST only when decoding, lexing, and parsing succeed. `CompileOutput` contains normalized IR only when all compiler-stage errors are absent. Both outputs contain diagnostics. Semantic warnings may accompany successful IR.
+
+`LosslessParseOutput` contains an exact token-and-trivia document only when decoding, lexing, and syntax parsing succeed. Its tokens retain original text and spans, while string tokens additionally expose decoded values. Reconstructing the document concatenates every token and trivia segment without normalization. Semantic validation remains a separate stage.
 
 ## Code Style
 
@@ -115,7 +120,7 @@ match operator {
 
 - WebAssembly bindings
 - Native CLI commands
-- Formatter and comment-preserving concrete syntax tree
+- Canonical formatter implementation
 - Theme and icon resolution
 - Layout and renderer integration
 - Multi-error syntax recovery

@@ -8,7 +8,11 @@ use crate::lexer::{Token, TokenKind, tokenize};
 type ParseResult<T> = Result<T, Box<Diagnostic>>;
 
 pub(crate) fn parse(source: &str) -> ParseResult<Document> {
-    Parser::new(tokenize(source)?).parse_document()
+    parse_tokens(tokenize(source)?)
+}
+
+pub(crate) fn parse_tokens(tokens: Vec<Token>) -> ParseResult<Document> {
+    Parser::new(tokens).parse_document()
 }
 
 struct Parser {
