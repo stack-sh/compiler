@@ -94,6 +94,8 @@ pub struct Diagnostic {
     pub message: String,
     /// Primary source span.
     pub span: Span,
+    /// Ordered source values or constructs valid at the primary span.
+    pub expected: Vec<String>,
     /// Optional corrective guidance.
     pub help: Option<String>,
     /// Other declarations or references involved in the problem.
@@ -107,6 +109,7 @@ impl Diagnostic {
             severity: Severity::Error,
             message: message.into(),
             span,
+            expected: Vec::new(),
             help: None,
             related: Vec::new(),
         }
@@ -118,6 +121,7 @@ impl Diagnostic {
             severity: Severity::Warning,
             message: message.into(),
             span,
+            expected: Vec::new(),
             help: None,
             related: Vec::new(),
         }
@@ -128,11 +132,48 @@ impl Diagnostic {
         self
     }
 
+    pub(crate) fn with_expected<I, S>(mut self, expected: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.expected = expected.into_iter().map(Into::into).collect();
+        self
+    }
+
     pub(crate) fn with_related(mut self, message: impl Into<String>, span: Span) -> Self {
         self.related.push(RelatedInformation {
             message: message.into(),
             span,
         });
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Diagnostic, SourcePosition, Span};
+
+    #[test]
+    fn diagnostics_default_to_no_expected_values() {
+        let diagnostic = Diagnostic::error(
+            "STK2002",
+            "Unexpected value.",
+            Span::point(SourcePosition::start()),
+        );
+
+        assert!(diagnostic.expected.is_empty());
+    }
+
+    #[test]
+    fn diagnostics_preserve_expected_value_order() {
+        let diagnostic = Diagnostic::error(
+            "STK2002",
+            "Unknown direction.",
+            Span::point(SourcePosition::start()),
+        )
+        .with_expected(["right", "down"]);
+
+        assert_eq!(diagnostic.expected, ["right", "down"]);
     }
 }

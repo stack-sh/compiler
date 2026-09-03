@@ -7,6 +7,12 @@ use crate::ir;
 
 const SUPPORTED_MAJOR: u32 = 1;
 const SUPPORTED_MINOR: u32 = 0;
+const NODE_KINDS: [&str; 10] = [
+    "actor", "client", "service", "function", "worker", "database", "cache", "queue", "storage",
+    "external",
+];
+const EDGE_KINDS: [&str; 5] = ["flow", "request", "event", "data", "dependency"];
+const LAYOUT_DIRECTIONS: [&str; 2] = ["right", "down"];
 
 pub(crate) fn validate(document: &ast::Document) -> CompileOutput {
     let mut validator = Validator::new(document);
@@ -91,6 +97,7 @@ impl<'document> Validator<'document> {
                     ),
                     version.span,
                 )
+                .with_expected([format!("{SUPPORTED_MAJOR}.{SUPPORTED_MINOR}")])
                 .with_help(format!(
                     "Use Stack {SUPPORTED_MAJOR}.{SUPPORTED_MINOR} or an older compatible minor version."
                 )),
@@ -123,11 +130,14 @@ impl<'document> Validator<'document> {
         self.validate_text(&group.label, 1, 60, "group label");
 
         if depth > 3 {
-            self.diagnostics.push(Diagnostic::error(
-                "STK3010",
-                "Group nesting exceeds three levels below the diagram.",
-                group.identifier.span,
-            ));
+            self.diagnostics.push(
+                Diagnostic::error(
+                    "STK3010",
+                    "Group nesting exceeds three levels below the diagram.",
+                    group.identifier.span,
+                )
+                .with_help("Move this group to the third level or higher."),
+            );
         }
 
         if descendant_node_count(group) == 0 {
@@ -164,6 +174,7 @@ impl<'document> Validator<'document> {
                     ),
                     identifier.span,
                 )
+                .with_help("Rename or remove this duplicate declaration.")
                 .with_related("The first declaration is here.", original.span),
             );
         } else {
@@ -191,11 +202,15 @@ impl<'document> Validator<'document> {
                 NodeProperty::Kind(value) => {
                     self.validate_identifier(value);
                     if parse_node_kind(&value.value).is_none() {
-                        self.diagnostics.push(Diagnostic::error(
-                            "STK2002",
-                            format!("Unknown node kind '{}'.", value.value),
-                            value.span,
-                        ));
+                        self.diagnostics.push(
+                            Diagnostic::error(
+                                "STK2002",
+                                format!("Unknown node kind '{}'.", value.value),
+                                value.span,
+                            )
+                            .with_expected(NODE_KINDS)
+                            .with_help("Choose one of the supported node kinds."),
+                        );
                     }
                 }
                 NodeProperty::Icon(value) => self.validate_icon_identifier(value),
@@ -220,6 +235,7 @@ impl<'document> Validator<'document> {
                         "A diagram may contain only one theme statement.",
                         theme.span,
                     )
+                    .with_help("Remove the duplicate theme statement.")
                     .with_related("The first theme statement is here.", first_span),
                 );
             } else {
@@ -281,6 +297,7 @@ impl<'document> Validator<'document> {
                         "A layout scope may contain only one layout block.",
                         duplicate.span,
                     )
+                    .with_help("Remove the duplicate layout block.")
                     .with_related("The first layout block is here.", first.span),
                 );
             }
@@ -301,11 +318,17 @@ impl<'document> Validator<'document> {
                 LayoutStatement::Direction(value) => {
                     self.validate_identifier(value);
                     if !matches!(value.value.as_str(), "right" | "down") {
-                        self.diagnostics.push(Diagnostic::error(
-                            "STK2002",
-                            format!("Unknown layout direction '{}'.", value.value),
-                            value.span,
-                        ));
+                        self.diagnostics.push(
+                            Diagnostic::error(
+                                "STK2002",
+                                format!("Unknown layout direction '{}'.", value.value),
+                                value.span,
+                            )
+                            .with_expected(LAYOUT_DIRECTIONS)
+                            .with_help(
+                                "Use 'right' for horizontal flow or 'down' for vertical flow.",
+                            ),
+                        );
                     }
                     self.reject_duplicate_singleton(
                         "direction statement",
@@ -326,6 +349,7 @@ impl<'document> Validator<'document> {
                                     ),
                                     identifier.span,
                                 )
+                                .with_help("Keep this child in only one same-rank statement.")
                                 .with_related("The child was first ranked here.", *original),
                             );
                         } else {
@@ -354,17 +378,38 @@ impl<'document> Validator<'document> {
         for identifier in &list.identifiers {
             let identifier_is_valid = self.validate_identifier(identifier);
             if identifier_is_valid && !direct_children.contains_key(identifier.value.as_str()) {
-                self.diagnostics.push(
-                    Diagnostic::error(
-                        "STK3011",
-                        format!(
-                            "Layout reference '{}' is not a direct child of this scope.",
-                            identifier.value
-                        ),
-                        identifier.span,
-                    )
-                    .with_help("Reference a node or group declared directly in this layout scope."),
+                let suggestions = identifier_suggestions(
+                    &identifier.value,
+                    direct_children.iter().map(|(name, span)| (*name, *span)),
                 );
+                let expected = suggestions
+                    .iter()
+                    .map(|(name, _)| name.clone())
+                    .collect::<Vec<_>>();
+                let mut diagnostic = Diagnostic::error(
+                    "STK3011",
+                    format!(
+                        "Layout reference '{}' is not a direct child of this scope.",
+                        identifier.value
+                    ),
+                    identifier.span,
+                )
+                .with_expected(expected.clone());
+                diagnostic = if expected.is_empty() {
+                    diagnostic.with_help(
+                        "Reference a node or group declared directly in this layout scope.",
+                    )
+                } else {
+                    diagnostic.with_help(format!(
+                        "Use a direct child such as {}.",
+                        expected.join(", ")
+                    ))
+                };
+                for (name, span) in suggestions {
+                    diagnostic = diagnostic
+                        .with_related(format!("Direct child '{name}' is declared here."), span);
+                }
+                self.diagnostics.push(diagnostic);
             }
 
             if let Some(original) = seen.insert(identifier.value.as_str(), identifier.span) {
@@ -377,6 +422,7 @@ impl<'document> Validator<'document> {
                         ),
                         identifier.span,
                     )
+                    .with_help("Remove the repeated reference from this list.")
                     .with_related("The first occurrence is here.", original),
                 );
             }
@@ -405,11 +451,14 @@ impl<'document> Validator<'document> {
             }
 
             if from_is_node && to_is_node && edge.from.value == edge.to.value {
-                self.diagnostics.push(Diagnostic::error(
-                    "STK3005",
-                    format!("Edge connects node '{}' to itself.", edge.from.value),
-                    edge.span,
-                ));
+                self.diagnostics.push(
+                    Diagnostic::error(
+                        "STK3005",
+                        format!("Edge connects node '{}' to itself.", edge.from.value),
+                        edge.span,
+                    )
+                    .with_help("Connect two different nodes or remove this edge."),
+                );
             }
 
             if let Some(edge_kind) =
@@ -423,6 +472,7 @@ impl<'document> Validator<'document> {
                             "An exact duplicate edge is declared.",
                             edge.span,
                         )
+                        .with_help("Remove this edge or change its endpoints, kind, or label.")
                         .with_related("The first edge is here.", original),
                     );
                 }
@@ -460,11 +510,37 @@ impl<'document> Validator<'document> {
                 false
             }
             None => {
-                self.diagnostics.push(Diagnostic::error(
+                let suggestions = identifier_suggestions(
+                    &endpoint.value,
+                    self.symbols.iter().filter_map(|(name, symbol)| {
+                        (symbol.kind == SymbolKind::Node).then_some((*name, symbol.span))
+                    }),
+                );
+                let expected = suggestions
+                    .iter()
+                    .map(|(name, _)| name.clone())
+                    .collect::<Vec<_>>();
+                let mut diagnostic = Diagnostic::error(
                     "STK3003",
                     format!("Unknown node '{}'.", endpoint.value),
                     endpoint.span,
-                ));
+                )
+                .with_expected(expected.clone());
+                diagnostic = if expected.is_empty() {
+                    diagnostic.with_help(
+                        "Declare this node or replace it with an existing node identifier.",
+                    )
+                } else {
+                    diagnostic.with_help(format!(
+                        "Use a declared node such as {}.",
+                        expected.join(", ")
+                    ))
+                };
+                for (name, span) in suggestions {
+                    diagnostic =
+                        diagnostic.with_related(format!("Node '{name}' is declared here."), span);
+                }
+                self.diagnostics.push(diagnostic);
                 false
             }
         }
@@ -480,11 +556,15 @@ impl<'document> Validator<'document> {
             if let Some(kind) = parse_edge_kind(&value.value) {
                 effective = Some(kind.as_str());
             } else {
-                self.diagnostics.push(Diagnostic::error(
-                    "STK2002",
-                    format!("Unknown edge kind '{}'.", value.value),
-                    value.span,
-                ));
+                self.diagnostics.push(
+                    Diagnostic::error(
+                        "STK2002",
+                        format!("Unknown edge kind '{}'.", value.value),
+                        value.span,
+                    )
+                    .with_expected(EDGE_KINDS)
+                    .with_help("Choose one of the supported edge kinds."),
+                );
                 effective = None;
             }
         }
@@ -520,36 +600,45 @@ impl<'document> Validator<'document> {
             .filter(|member| matches!(member, DiagramMember::Edge(_)))
             .count();
         if !(1..=40).contains(&self.node_count) {
-            self.diagnostics.push(Diagnostic::error(
-                "STK4003",
-                format!(
-                    "A diagram must contain between 1 and 40 nodes; found {}.",
-                    self.node_count
-                ),
-                self.document.diagram.span,
-            ));
+            self.diagnostics.push(
+                Diagnostic::error(
+                    "STK4003",
+                    format!(
+                        "A diagram must contain between 1 and 40 nodes; found {}.",
+                        self.node_count
+                    ),
+                    self.document.diagram.span,
+                )
+                .with_help("Add nodes or split the diagram to stay within 1 to 40 nodes."),
+            );
         }
         if self.group_count > 12 {
-            self.diagnostics.push(Diagnostic::error(
-                "STK4003",
-                format!(
-                    "A diagram may contain at most 12 groups; found {}.",
-                    self.group_count
-                ),
-                self.document.diagram.span,
-            ));
+            self.diagnostics.push(
+                Diagnostic::error(
+                    "STK4003",
+                    format!(
+                        "A diagram may contain at most 12 groups; found {}.",
+                        self.group_count
+                    ),
+                    self.document.diagram.span,
+                )
+                .with_help("Remove groups or split the diagram into focused views."),
+            );
         }
 
         let maximum_edges = 80.min(self.node_count.saturating_mul(2));
         if edge_count > maximum_edges {
-            self.diagnostics.push(Diagnostic::error(
-                "STK4003",
-                format!(
-                    "A diagram with {} nodes may contain at most {maximum_edges} edges; found {edge_count}.",
-                    self.node_count
-                ),
-                self.document.diagram.span,
-            ));
+            self.diagnostics.push(
+                Diagnostic::error(
+                    "STK4003",
+                    format!(
+                        "A diagram with {} nodes may contain at most {maximum_edges} edges; found {edge_count}.",
+                        self.node_count
+                    ),
+                    self.document.diagram.span,
+                )
+                .with_help("Remove edges or split the diagram into focused views."),
+            );
         }
     }
 
@@ -557,22 +646,32 @@ impl<'document> Validator<'document> {
         if is_identifier(&identifier.value) {
             true
         } else {
-            self.diagnostics.push(Diagnostic::error(
-                "STK3001",
-                format!("Identifier '{}' is invalid.", identifier.value),
-                identifier.span,
-            ));
+            self.diagnostics.push(
+                Diagnostic::error(
+                    "STK3001",
+                    format!("Identifier '{}' is invalid.", identifier.value),
+                    identifier.span,
+                )
+                .with_help(
+                    "Use 1 to 64 lowercase ASCII letters, digits, underscores, or hyphens, starting with a letter.",
+                ),
+            );
             false
         }
     }
 
     fn validate_icon_identifier(&mut self, identifier: &Spanned<String>) {
         if !is_icon_identifier(&identifier.value) {
-            self.diagnostics.push(Diagnostic::error(
-                "STK3013",
-                format!("Icon identifier '{}' is malformed.", identifier.value),
-                identifier.span,
-            ));
+            self.diagnostics.push(
+                Diagnostic::error(
+                    "STK3013",
+                    format!("Icon identifier '{}' is malformed.", identifier.value),
+                    identifier.span,
+                )
+                .with_help(
+                    "Use 1 to 64 lowercase ASCII letters, digits, or hyphens, starting with a letter or digit.",
+                ),
+            );
         }
     }
 
@@ -603,13 +702,18 @@ impl<'document> Validator<'document> {
                 .next_back()
                 .is_some_and(char::is_whitespace);
         if !(minimum..=maximum).contains(&length) || boundary_whitespace {
-            self.diagnostics.push(Diagnostic::error(
-                "STK3008",
-                format!(
-                    "The {description} must contain {minimum} to {maximum} Unicode scalar values without leading or trailing whitespace."
-                ),
-                value.span,
-            ));
+            self.diagnostics.push(
+                Diagnostic::error(
+                    "STK3008",
+                    format!(
+                        "The {description} must contain {minimum} to {maximum} Unicode scalar values without leading or trailing whitespace."
+                    ),
+                    value.span,
+                )
+                .with_help(format!(
+                    "Trim the text and keep its length between {minimum} and {maximum}."
+                )),
+            );
         }
     }
 
@@ -626,6 +730,7 @@ impl<'document> Validator<'document> {
                     format!("Property '{name}' occurs more than once in the same block."),
                     span,
                 )
+                .with_help("Remove the duplicate property.")
                 .with_related("The first property is here.", original),
             );
         }
@@ -644,6 +749,7 @@ impl<'document> Validator<'document> {
                     format!("A layout block may contain only one {description}."),
                     span,
                 )
+                .with_help("Remove the duplicate layout statement.")
                 .with_related("The first occurrence is here.", *original),
             );
         } else {
@@ -679,6 +785,50 @@ fn edge_key(edge: &ast::Edge, kind: &'static str) -> EdgeKey {
         label: edge.label.as_ref().map(|label| label.value.clone()),
         kind,
     }
+}
+
+fn identifier_suggestions<'candidate>(
+    authored: &str,
+    candidates: impl Iterator<Item = (&'candidate str, Span)>,
+) -> Vec<(String, Span)> {
+    let authored_length = authored.chars().count();
+    let mut suggestions = candidates
+        .filter_map(|(candidate, span)| {
+            let distance = levenshtein(authored, candidate);
+            let threshold = 1.max(authored_length.max(candidate.chars().count()) / 3);
+            (distance <= threshold).then_some((distance, candidate, span))
+        })
+        .collect::<Vec<_>>();
+    suggestions.sort_by(|left, right| {
+        left.0
+            .cmp(&right.0)
+            .then_with(|| left.1.as_bytes().cmp(right.1.as_bytes()))
+    });
+    suggestions.truncate(3);
+    suggestions
+        .into_iter()
+        .map(|(_, name, span)| (name.to_owned(), span))
+        .collect()
+}
+
+fn levenshtein(left: &str, right: &str) -> usize {
+    let right = right.chars().collect::<Vec<_>>();
+    let mut previous = (0..=right.len()).collect::<Vec<_>>();
+    let mut current = vec![0; right.len() + 1];
+
+    for (left_index, left_character) in left.chars().enumerate() {
+        current[0] = left_index + 1;
+        for (right_index, right_character) in right.iter().copied().enumerate() {
+            let substitution =
+                previous[right_index] + usize::from(left_character != right_character);
+            current[right_index + 1] = (current[right_index] + 1)
+                .min(previous[right_index + 1] + 1)
+                .min(substitution);
+        }
+        std::mem::swap(&mut previous, &mut current);
+    }
+
+    previous[right.len()]
 }
 
 fn is_identifier(value: &str) -> bool {

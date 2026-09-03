@@ -36,7 +36,7 @@ fn valid_cases_match_normalized_ir() -> Result<(), Box<dyn Error>> {
             json!({ "schemaVersion": "1.0", "diagnostics": [] })
         };
         assert_eq!(
-            diagnostics_json(&output.diagnostics),
+            diagnostics_json(&output.diagnostics, &expected_diagnostics),
             expected_diagnostics,
             "diagnostic mismatch in {}",
             case.display()
@@ -59,7 +59,7 @@ fn invalid_cases_match_portable_diagnostics() -> Result<(), Box<dyn Error>> {
             case.display()
         );
         assert_eq!(
-            diagnostics_json(&output.diagnostics),
+            diagnostics_json(&output.diagnostics, &expected),
             expected,
             "diagnostic mismatch in {}",
             case.display()
@@ -94,22 +94,37 @@ fn test_error(message: String) -> Box<dyn Error> {
     Box::new(std::io::Error::other(message))
 }
 
-fn diagnostics_json(diagnostics: &[diagnostic::Diagnostic]) -> Value {
+fn diagnostics_json(diagnostics: &[diagnostic::Diagnostic], expected: &Value) -> Value {
+    let expected_diagnostics = expected.get("diagnostics").and_then(Value::as_array);
     json!({
         "schemaVersion": "1.0",
         "diagnostics": diagnostics
             .iter()
-            .map(diagnostic_expectation_json)
+            .enumerate()
+            .map(|(index, diagnostic)| {
+                let compare_expected = expected_diagnostics
+                    .and_then(|items| items.get(index))
+                    .and_then(|item| item.get("expected"))
+                    .is_some();
+                diagnostic_expectation_json(diagnostic, compare_expected)
+            })
             .collect::<Vec<_>>(),
     })
 }
 
-fn diagnostic_expectation_json(diagnostic: &diagnostic::Diagnostic) -> Value {
-    json!({
+fn diagnostic_expectation_json(
+    diagnostic: &diagnostic::Diagnostic,
+    compare_expected: bool,
+) -> Value {
+    let mut value = json!({
         "code": diagnostic.code,
         "severity": severity_name(diagnostic.severity),
         "range": range_json(diagnostic.span),
-    })
+    });
+    if compare_expected {
+        value["expected"] = json!(diagnostic.expected);
+    }
+    value
 }
 
 fn severity_name(severity: diagnostic::Severity) -> &'static str {

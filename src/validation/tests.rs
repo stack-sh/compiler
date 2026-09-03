@@ -1,6 +1,8 @@
 use crate::diagnostic::Severity;
 use crate::ir::{Direction, EdgeDirection, EdgeKind, ElementId, NodeKind};
 
+use super::levenshtein;
+
 fn compile(source: &str) -> crate::CompileOutput {
     crate::compile(source)
 }
@@ -234,6 +236,79 @@ diagram "Invalid variants" {
     for expected in ["STK2002", "STK3001", "STK3005", "STK3012", "STK3014"] {
         assert!(codes.contains(&expected), "missing {expected}: {codes:?}");
     }
+}
+
+#[test]
+fn validation_reports_closed_set_expectations() {
+    let output = compile(
+        r#"stack 1.0
+diagram "Expected values" {
+  node a "A" { kind process }
+  node b "B"
+  layout { direction sideways }
+  edge a -> b { kind command }
+}"#,
+    );
+
+    let diagnostics = output
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "STK2002")
+        .collect::<Vec<_>>();
+    assert_eq!(diagnostics.len(), 3);
+    assert_eq!(
+        diagnostics[0].expected,
+        [
+            "actor", "client", "service", "function", "worker", "database", "cache", "queue",
+            "storage", "external",
+        ]
+    );
+    assert_eq!(diagnostics[1].expected, ["right", "down"]);
+    assert_eq!(
+        diagnostics[2].expected,
+        ["flow", "request", "event", "data", "dependency"]
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.help.is_some())
+    );
+}
+
+#[test]
+fn validation_suggests_nearby_nodes_deterministically() {
+    let output = compile(
+        r#"stack 1.0
+diagram "Suggestions" {
+  node api "API"
+  node payment "Payment"
+  node paymant "Paymant"
+  node paymont "Paymont"
+  node database "Database"
+  edge api -> paymnt
+}"#,
+    );
+
+    let Some(diagnostic) = output
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == "STK3003")
+    else {
+        return;
+    };
+    assert_eq!(diagnostic.expected, ["paymant", "payment", "paymont"]);
+    assert_eq!(diagnostic.related.len(), 3);
+    assert_eq!(
+        diagnostic.help.as_deref(),
+        Some("Use a declared node such as paymant, payment, paymont.")
+    );
+}
+
+#[test]
+fn suggestion_distance_counts_unicode_scalars() {
+    assert_eq!(levenshtein("café", "cafe"), 1);
+    assert_eq!(levenshtein("図", "図表"), 1);
+    assert_eq!(levenshtein("right", "down"), 5);
 }
 
 #[test]

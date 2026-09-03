@@ -40,7 +40,7 @@ impl Parser {
     fn parse_version(&mut self) -> ParseResult<Version> {
         let start = self.expect_keyword("stack")?.span;
         let (major, _) = self.expect_integer("language major version")?;
-        self.expect_simple(|kind| matches!(kind, TokenKind::Dot), "'.'")?;
+        self.expect_simple(|kind| matches!(kind, TokenKind::Dot), "'.'", ".")?;
         let (minor, minor_span) = self.expect_integer("language minor version")?;
 
         Ok(Version {
@@ -53,7 +53,7 @@ impl Parser {
     fn parse_diagram(&mut self) -> ParseResult<Diagram> {
         let start = self.expect_keyword("diagram")?.span;
         let title = self.expect_string("diagram title")?;
-        self.expect_simple(|kind| matches!(kind, TokenKind::LeftBrace), "'{'")?;
+        self.expect_simple(|kind| matches!(kind, TokenKind::LeftBrace), "'{'", "{")?;
 
         let mut members = Vec::new();
         while !self.at_simple(|kind| matches!(kind, TokenKind::RightBrace)) {
@@ -64,12 +64,17 @@ impl Parser {
                 Some("edge") => DiagramMember::Edge(self.parse_edge()?),
                 Some("theme") => DiagramMember::Theme(self.parse_theme()?),
                 Some("layout") => DiagramMember::Layout(self.parse_layout()?),
-                _ => return Err(self.unexpected("a diagram declaration")),
+                _ => {
+                    return Err(self.unexpected(
+                        "a diagram declaration",
+                        ["node", "group", "edge", "theme", "layout", "}"],
+                    ));
+                }
             });
         }
 
         let end = self
-            .expect_simple(|kind| matches!(kind, TokenKind::RightBrace), "'}'")?
+            .expect_simple(|kind| matches!(kind, TokenKind::RightBrace), "'}'", "}")?
             .span;
 
         Ok(Diagram {
@@ -83,7 +88,7 @@ impl Parser {
         let start = self.expect_keyword("group")?.span;
         let identifier = self.expect_identifier("group identifier")?;
         let label = self.expect_string("group label")?;
-        self.expect_simple(|kind| matches!(kind, TokenKind::LeftBrace), "'{'")?;
+        self.expect_simple(|kind| matches!(kind, TokenKind::LeftBrace), "'{'", "{")?;
 
         let mut members = Vec::new();
         while !self.at_simple(|kind| matches!(kind, TokenKind::RightBrace)) {
@@ -92,12 +97,17 @@ impl Parser {
                 Some("node") => GroupMember::Node(self.parse_node()?),
                 Some("group") => GroupMember::Group(self.parse_group()?),
                 Some("layout") => GroupMember::Layout(self.parse_layout()?),
-                _ => return Err(self.unexpected("a node, group, or layout declaration")),
+                _ => {
+                    return Err(self.unexpected(
+                        "a node, group, or layout declaration",
+                        ["node", "group", "layout", "}"],
+                    ));
+                }
             });
         }
 
         let end = self
-            .expect_simple(|kind| matches!(kind, TokenKind::RightBrace), "'}'")?
+            .expect_simple(|kind| matches!(kind, TokenKind::RightBrace), "'}'", "}")?
             .span;
 
         Ok(Group {
@@ -120,7 +130,9 @@ impl Parser {
             .is_some()
         {
             if self.at_simple(|kind| matches!(kind, TokenKind::RightBrace)) {
-                return Err(self.unexpected("at least one node property"));
+                return Err(
+                    self.unexpected("at least one node property", ["kind", "icon", "detail"])
+                );
             }
 
             while !self.at_simple(|kind| matches!(kind, TokenKind::RightBrace)) {
@@ -138,12 +150,16 @@ impl Parser {
                         self.advance();
                         NodeProperty::Detail(self.expect_string("node detail")?)
                     }
-                    _ => return Err(self.unexpected("a node property")),
+                    _ => {
+                        return Err(
+                            self.unexpected("a node property", ["kind", "icon", "detail", "}"])
+                        );
+                    }
                 });
             }
 
             end = self
-                .expect_simple(|kind| matches!(kind, TokenKind::RightBrace), "'}'")?
+                .expect_simple(|kind| matches!(kind, TokenKind::RightBrace), "'}'", "}")?
                 .span;
         }
 
@@ -163,7 +179,7 @@ impl Parser {
             TokenKind::ForwardArrow => EdgeOperator::Forward,
             TokenKind::BidirectionalArrow => EdgeOperator::Bidirectional,
             TokenKind::Association => EdgeOperator::Association,
-            _ => return Err(self.unexpected("an edge operator")),
+            _ => return Err(self.unexpected("an edge operator", ["->", "<->", "--"])),
         };
         self.advance();
         let operator = Spanned::new(operator, operator_token.span);
@@ -181,7 +197,7 @@ impl Parser {
             .is_some()
         {
             if self.at_simple(|kind| matches!(kind, TokenKind::RightBrace)) {
-                return Err(self.unexpected("at least one edge property"));
+                return Err(self.unexpected("at least one edge property", ["kind"]));
             }
 
             while !self.at_simple(|kind| matches!(kind, TokenKind::RightBrace)) {
@@ -191,12 +207,12 @@ impl Parser {
                         self.advance();
                         EdgeProperty::Kind(self.expect_identifier("edge kind")?)
                     }
-                    _ => return Err(self.unexpected("an edge property")),
+                    _ => return Err(self.unexpected("an edge property", ["kind", "}"])),
                 });
             }
 
             end = self
-                .expect_simple(|kind| matches!(kind, TokenKind::RightBrace), "'}'")?
+                .expect_simple(|kind| matches!(kind, TokenKind::RightBrace), "'}'", "}")?
                 .span;
         }
 
@@ -221,9 +237,12 @@ impl Parser {
 
     fn parse_layout(&mut self) -> ParseResult<Layout> {
         let start = self.expect_keyword("layout")?.span;
-        self.expect_simple(|kind| matches!(kind, TokenKind::LeftBrace), "'{'")?;
+        self.expect_simple(|kind| matches!(kind, TokenKind::LeftBrace), "'{'", "{")?;
         if self.at_simple(|kind| matches!(kind, TokenKind::RightBrace)) {
-            return Err(self.unexpected("at least one layout statement"));
+            return Err(self.unexpected(
+                "at least one layout statement",
+                ["direction", "rank", "order"],
+            ));
         }
 
         let mut statements = Vec::new();
@@ -243,12 +262,16 @@ impl Parser {
                     self.advance();
                     LayoutStatement::Order(self.parse_identifier_list()?)
                 }
-                _ => return Err(self.unexpected("a layout statement")),
+                _ => {
+                    return Err(
+                        self.unexpected("a layout statement", ["direction", "rank", "order", "}"])
+                    );
+                }
             });
         }
 
         let end = self
-            .expect_simple(|kind| matches!(kind, TokenKind::RightBrace), "'}'")?
+            .expect_simple(|kind| matches!(kind, TokenKind::RightBrace), "'}'", "}")?
             .span;
         Ok(Layout {
             statements,
@@ -258,10 +281,10 @@ impl Parser {
 
     fn parse_identifier_list(&mut self) -> ParseResult<IdentifierList> {
         let start = self
-            .expect_simple(|kind| matches!(kind, TokenKind::LeftBracket), "'['")?
+            .expect_simple(|kind| matches!(kind, TokenKind::LeftBracket), "'['", "[")?
             .span;
         let mut identifiers = vec![self.expect_identifier("layout identifier")?];
-        self.expect_simple(|kind| matches!(kind, TokenKind::Comma), "','")?;
+        self.expect_simple(|kind| matches!(kind, TokenKind::Comma), "','", ",")?;
         identifiers.push(self.expect_identifier("layout identifier")?);
 
         while self
@@ -272,7 +295,7 @@ impl Parser {
         }
 
         let end = self
-            .expect_simple(|kind| matches!(kind, TokenKind::RightBracket), "']'")?
+            .expect_simple(|kind| matches!(kind, TokenKind::RightBracket), "']'", "]")?
             .span;
         Ok(IdentifierList {
             identifiers,
@@ -281,23 +304,32 @@ impl Parser {
     }
 
     fn expect_integer(&mut self, description: &str) -> ParseResult<(u32, Span)> {
-        let value = self.expect_identifier(description)?;
-        if value.value.len() > 1 && value.value.starts_with('0') {
-            return Err(Box::new(Diagnostic::error(
-                "STK2002",
-                format!("Expected {description} without leading zeroes."),
-                value.span,
-            )));
+        let token = self.current_token().clone();
+        let TokenKind::Bare(value) = token.kind else {
+            return Err(self.unexpected(description, ["<integer>"]));
+        };
+        self.advance();
+
+        if value.len() > 1 && value.starts_with('0') {
+            return Err(Box::new(
+                Diagnostic::error(
+                    "STK2002",
+                    format!("Expected {description} without leading zeroes."),
+                    token.span,
+                )
+                .with_expected(["<integer>"])
+                .with_help("Use an unsigned decimal integer without leading zeroes."),
+            ));
         }
 
-        let parsed = value.value.parse::<u32>().map_err(|_| {
-            Box::new(Diagnostic::error(
-                "STK2002",
-                format!("Expected {description}."),
-                value.span,
-            ))
+        let parsed = value.parse::<u32>().map_err(|_| {
+            Box::new(
+                Diagnostic::error("STK2002", format!("Expected {description}."), token.span)
+                    .with_expected(["<integer>"])
+                    .with_help("Use an unsigned decimal integer without leading zeroes."),
+            )
         })?;
-        Ok((parsed, value.span))
+        Ok((parsed, token.span))
     }
 
     fn expect_identifier(&mut self, description: &str) -> ParseResult<Spanned<String>> {
@@ -307,7 +339,7 @@ impl Parser {
                 self.advance();
                 Ok(Spanned::new(value, token.span))
             }
-            _ => Err(self.unexpected(description)),
+            _ => Err(self.unexpected(description, ["<identifier>"])),
         }
     }
 
@@ -318,13 +350,13 @@ impl Parser {
                 self.advance();
                 Ok(Spanned::new(value, token.span))
             }
-            _ => Err(self.unexpected(description)),
+            _ => Err(self.unexpected(description, ["<string>"])),
         }
     }
 
     fn expect_keyword(&mut self, keyword: &str) -> ParseResult<Token> {
         if self.current_bare() != Some(keyword) {
-            return Err(self.unexpected(&format!("'{keyword}'")));
+            return Err(self.unexpected(&format!("'{keyword}'"), [keyword]));
         }
         let token = self.current_token().clone();
         self.advance();
@@ -335,9 +367,10 @@ impl Parser {
         &mut self,
         predicate: impl FnOnce(&TokenKind) -> bool,
         description: &str,
+        expected: &str,
     ) -> ParseResult<Token> {
         if !predicate(&self.current_token().kind) {
-            return Err(self.unexpected(description));
+            return Err(self.unexpected(description, [expected]));
         }
         let token = self.current_token().clone();
         self.advance();
@@ -357,35 +390,52 @@ impl Parser {
         if matches!(self.current_token().kind, TokenKind::End) {
             Ok(())
         } else {
-            Err(self.unexpected("the end of the document"))
+            Err(self.unexpected("the end of the document", ["<end-of-file>"]))
         }
     }
 
     fn reject_end(&self, construct: &str) -> ParseResult<()> {
         if matches!(self.current_token().kind, TokenKind::End) {
-            Err(Box::new(Diagnostic::error(
-                "STK2003",
-                format!("Input ended before the {construct} was complete."),
-                self.current_token().span,
-            )))
+            Err(Box::new(
+                Diagnostic::error(
+                    "STK2003",
+                    format!("Input ended before the {construct} was complete."),
+                    self.current_token().span,
+                )
+                .with_expected(["}"])
+                .with_help("Add the closing '}' for this construct."),
+            ))
         } else {
             Ok(())
         }
     }
 
-    fn unexpected(&self, expected: &str) -> Box<Diagnostic> {
+    fn unexpected<const N: usize>(
+        &self,
+        description: &str,
+        expected: [&str; N],
+    ) -> Box<Diagnostic> {
+        let help = format!("Use one of: {}.", expected.join(", "));
         if matches!(self.current_token().kind, TokenKind::End) {
-            Box::new(Diagnostic::error(
-                "STK2003",
-                format!("Input ended while expecting {expected}."),
-                self.current_token().span,
-            ))
+            Box::new(
+                Diagnostic::error(
+                    "STK2003",
+                    format!("Input ended while expecting {description}."),
+                    self.current_token().span,
+                )
+                .with_expected(expected)
+                .with_help(help),
+            )
         } else {
-            Box::new(Diagnostic::error(
-                "STK2002",
-                format!("Expected {expected}."),
-                self.current_token().span,
-            ))
+            Box::new(
+                Diagnostic::error(
+                    "STK2002",
+                    format!("Expected {description}."),
+                    self.current_token().span,
+                )
+                .with_expected(expected)
+                .with_help(help),
+            )
         }
     }
 
@@ -487,10 +537,24 @@ diagram "System" {
     #[test]
     fn rejects_unknown_and_incomplete_syntax() {
         let unknown = parse("stack 1.0 diagram \"x\" { server api \"API\" }");
-        assert!(matches!(unknown, Err(diagnostic) if diagnostic.code == "STK2002"));
+        assert!(matches!(
+            unknown,
+            Err(diagnostic)
+                if diagnostic.code == "STK2002"
+                    && diagnostic.expected == ["node", "group", "edge", "theme", "layout", "}"]
+                    && diagnostic.help.as_deref()
+                        == Some("Use one of: node, group, edge, theme, layout, }.")
+        ));
 
         let incomplete = parse("stack 1.0 diagram \"x\" { node api \"API\"");
-        assert!(matches!(incomplete, Err(diagnostic) if diagnostic.code == "STK2003"));
+        assert!(matches!(
+            incomplete,
+            Err(diagnostic)
+                if diagnostic.code == "STK2003"
+                    && diagnostic.expected == ["}"]
+                    && diagnostic.help.as_deref()
+                        == Some("Add the closing '}' for this construct.")
+        ));
     }
 
     #[test]
