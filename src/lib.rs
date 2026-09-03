@@ -9,6 +9,7 @@
 pub mod ast;
 pub mod diagnostic;
 pub mod ir;
+pub mod lossless;
 
 mod lexer;
 mod parser;
@@ -34,6 +35,15 @@ pub struct CompileOutput {
     pub diagnostics: Vec<Diagnostic>,
 }
 
+/// Output of syntactic parsing into the lossless source model.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LosslessParseOutput {
+    /// Lossless document, present only when lexical and syntax parsing succeeds.
+    pub document: Option<lossless::Document>,
+    /// Lexical and syntax diagnostics.
+    pub diagnostics: Vec<Diagnostic>,
+}
+
 /// Parses UTF-8 Stack source into a source-oriented AST.
 pub fn parse(source: &str) -> ParseOutput {
     match parser::parse(source) {
@@ -52,17 +62,45 @@ pub fn parse(source: &str) -> ParseOutput {
 pub fn parse_bytes(source: &[u8]) -> ParseOutput {
     match std::str::from_utf8(source) {
         Ok(source) => parse(source),
-        Err(error) => {
-            let position = position_after_valid_prefix(&source[..error.valid_up_to()]);
-            ParseOutput {
+        Err(error) => ParseOutput {
+            document: None,
+            diagnostics: vec![invalid_utf8_diagnostic(source, error)],
+        },
+    }
+}
+
+/// Parses UTF-8 Stack source into exact authored tokens and trivia.
+pub fn parse_lossless(source: &str) -> LosslessParseOutput {
+    let tokens = match lexer::tokenize(source) {
+        Ok(tokens) => tokens,
+        Err(diagnostic) => {
+            return LosslessParseOutput {
                 document: None,
-                diagnostics: vec![Diagnostic::error(
-                    "STK1001",
-                    "Input is not valid UTF-8.",
-                    diagnostic::Span::point(position),
-                )],
-            }
+                diagnostics: vec![*diagnostic],
+            };
         }
+    };
+
+    match parser::parse_tokens(tokens.clone()) {
+        Ok(_) => LosslessParseOutput {
+            document: Some(lossless::Document::from_lexer_tokens(source, tokens)),
+            diagnostics: Vec::new(),
+        },
+        Err(diagnostic) => LosslessParseOutput {
+            document: None,
+            diagnostics: vec![*diagnostic],
+        },
+    }
+}
+
+/// Decodes and parses Stack source bytes into exact authored tokens and trivia.
+pub fn parse_lossless_bytes(source: &[u8]) -> LosslessParseOutput {
+    match std::str::from_utf8(source) {
+        Ok(source) => parse_lossless(source),
+        Err(error) => LosslessParseOutput {
+            document: None,
+            diagnostics: vec![invalid_utf8_diagnostic(source, error)],
+        },
     }
 }
 
@@ -122,10 +160,22 @@ fn position_after_valid_prefix(prefix: &[u8]) -> diagnostic::SourcePosition {
     position
 }
 
+fn invalid_utf8_diagnostic(source: &[u8], error: std::str::Utf8Error) -> Diagnostic {
+    let position = position_after_valid_prefix(&source[..error.valid_up_to()]);
+    Diagnostic::error(
+        "STK1001",
+        "Input is not valid UTF-8.",
+        diagnostic::Span::point(position),
+    )
+}
+
 #[cfg(test)]
 mod tests {
+    use crate::lossless::TokenKind;
+
     use super::{
-        compile, compile_bytes, parse, parse_bytes, position_after_valid_prefix, validate,
+        compile, compile_bytes, parse, parse_bytes, parse_lossless, parse_lossless_bytes,
+        position_after_valid_prefix, validate,
     };
 
     #[test]
@@ -164,5 +214,70 @@ mod tests {
             position_after_valid_prefix(b"\xff"),
             crate::diagnostic::SourcePosition::start()
         );
+    }
+
+    #[test]
+    fn lossless_entry_points_preserve_trivia_escapes_and_crlf() {
+        let source = concat!(
+            "// leading\r\n",
+            "stack 1.0\r\n",
+            "diagram \"\\u56F3\" {\r\n",
+            "\tnode api \"API\" // trailing\r\n",
+            "}\r\n",
+        );
+        let output = parse_lossless(source);
+        assert!(output.diagnostics.is_empty());
+        let Some(document) = output.document else {
+            return;
+        };
+
+        assert_eq!(document.reconstruct(), source);
+        assert!(document.tokens().iter().any(|token| {
+            matches!(&token.kind, TokenKind::String(value) if value == "図")
+                && token.text == "\"\\u56F3\""
+        }));
+        assert!(
+            document.tokens().iter().any(|token| {
+                token.kind == TokenKind::Whitespace && token.text.contains("\r\n")
+            })
+        );
+        assert!(
+            document.tokens().iter().any(|token| {
+                token.kind == TokenKind::LineComment && token.text == "// trailing"
+            })
+        );
+
+        let bytes_output = parse_lossless_bytes(source.as_bytes());
+        assert_eq!(bytes_output.document, Some(document));
+    }
+
+    #[test]
+    fn lossless_entry_points_report_lexical_syntax_and_encoding_errors() {
+        let bom = parse_lossless("\u{feff}stack 1.0");
+        assert!(bom.document.is_none());
+        assert_eq!(bom.diagnostics[0].code, "STK1002");
+
+        let syntax = parse_lossless("stack 1.0 diagram \"x\" {");
+        assert!(syntax.document.is_none());
+        assert_eq!(syntax.diagnostics[0].code, "STK2003");
+
+        let encoding = parse_lossless_bytes(b"stack 1.0\r\n\xff");
+        assert!(encoding.document.is_none());
+        assert_eq!(encoding.diagnostics[0].code, "STK1001");
+        assert_eq!(encoding.diagnostics[0].span.start.line, 2);
+    }
+
+    #[test]
+    fn lossless_syntax_model_keeps_semantically_invalid_source() {
+        let source = concat!(
+            "stack 1.0\n",
+            "diagram \"Duplicate\" {\n",
+            "  node api \"First\"\n",
+            "  node api \"Second\"\n",
+            "}\n",
+        );
+
+        assert!(parse_lossless(source).document.is_some());
+        assert!(compile(source).diagram.is_none());
     }
 }

@@ -14,7 +14,7 @@ Development and primary CI follow the latest stable Rust and Cargo releases thro
 
 ```text
 Stack source
-    -> lexical analysis
+    -> lexical analysis -----> lossless tokens and trivia
     -> syntax AST
     -> semantic validation
     -> normalized Diagram IR
@@ -46,12 +46,19 @@ STACK_SPECIFICATION_DIR=../specification cargo test --features conformance --tes
 
 JSON support is development-only and does not add a runtime dependency to the compiler library. CI checks out the recorded specification revision before running the suite.
 
+## Lossless Source Model
+
+`parse_lossless` and `parse_lossless_bytes` expose every authored token, whitespace segment, line comment, original string spelling, CRLF sequence, and end-exclusive source span. Concatenating token text through `lossless::Document::reconstruct` reproduces the input byte-for-byte. This source-oriented API is separate from normalized IR and performs no filesystem access.
+
+Lossless parsing succeeds for syntactically valid source even when semantic validation would later reject it. Lexical and syntax errors return diagnostics without a partial document.
+
 ## Architecture
 
 - [`docs/decisions/0001-build-a-portable-rust-compiler-core.md`](./docs/decisions/0001-build-a-portable-rust-compiler-core.md)
 - [`docs/decisions/0002-separate-syntax-ast-from-normalized-ir.md`](./docs/decisions/0002-separate-syntax-ast-from-normalized-ir.md)
 - [`docs/decisions/0003-use-a-handwritten-parser.md`](./docs/decisions/0003-use-a-handwritten-parser.md)
 - [`docs/decisions/0004-consume-a-pinned-conformance-suite.md`](./docs/decisions/0004-consume-a-pinned-conformance-suite.md)
+- [`docs/decisions/0005-add-a-lossless-source-model.md`](./docs/decisions/0005-add-a-lossless-source-model.md)
 - [`docs/specs/compiler-frontend.md`](./docs/specs/compiler-frontend.md)
 
 ## License

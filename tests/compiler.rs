@@ -1,4 +1,6 @@
-use stack_compiler::{compile, compile_bytes, diagnostic::Severity, ir};
+use stack_compiler::{
+    compile, compile_bytes, diagnostic::Severity, ir, lossless::TokenKind, parse_lossless,
+};
 
 #[test]
 fn public_api_applies_defaults_to_a_valid_document() {
@@ -58,6 +60,32 @@ fn byte_api_reports_encoding_and_bom_errors() {
     let bom = compile_bytes("\u{feff}stack 1.0 diagram \"x\" { node x \"X\" }".as_bytes());
     assert_eq!(bom.diagnostics[0].code, "STK1002");
     assert!(bom.diagram.is_none());
+}
+
+#[test]
+fn public_lossless_api_reconstructs_authored_source() {
+    let source = concat!(
+        "// leading\r\n",
+        "stack 1.0\r\n",
+        "diagram \"\\u0041\" { node api \"API\" } // trailing\r\n",
+    );
+    let output = parse_lossless(source);
+    assert!(output.diagnostics.is_empty());
+    let Some(document) = output.document else {
+        return;
+    };
+
+    assert_eq!(document.reconstruct(), source);
+    assert!(
+        document
+            .tokens()
+            .iter()
+            .any(|token| token.kind == TokenKind::LineComment)
+    );
+    assert!(document.tokens().iter().any(
+        |token| matches!(&token.kind, TokenKind::String(value) if value == "A")
+            && token.text == "\"\\u0041\""
+    ));
 }
 
 #[test]
