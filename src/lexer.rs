@@ -32,11 +32,14 @@ pub(crate) fn tokenize(source: &str) -> LexResult<Vec<Token>> {
             line: 1,
             column: 2,
         };
-        return Err(Box::new(Diagnostic::error(
-            "STK1002",
-            "A byte order mark is not permitted.",
-            Span { start, end },
-        )));
+        return Err(Box::new(
+            Diagnostic::error(
+                "STK1002",
+                "A byte order mark is not permitted.",
+                Span { start, end },
+            )
+            .with_help("Remove the UTF-8 byte order mark at the start of the file."),
+        ));
     }
 
     Lexer::new(source).tokenize()
@@ -131,14 +134,18 @@ impl<'source> Lexer<'source> {
 
         loop {
             let Some(character) = self.peek() else {
-                return Err(Box::new(Diagnostic::error(
-                    "STK2003",
-                    "Input ended before the string was closed.",
-                    Span {
-                        start,
-                        end: self.position,
-                    },
-                )));
+                return Err(Box::new(
+                    Diagnostic::error(
+                        "STK2003",
+                        "Input ended before the string was closed.",
+                        Span {
+                            start,
+                            end: self.position,
+                        },
+                    )
+                    .with_expected(["\""])
+                    .with_help("Add a closing double quote."),
+                ));
             };
 
             match character {
@@ -162,22 +169,30 @@ impl<'source> Lexer<'source> {
                         start: self.position,
                         end: self.position_after_current(),
                     };
-                    return Err(Box::new(Diagnostic::error(
-                        "STK1003",
-                        "Strings cannot contain line breaks or tabs.",
-                        span,
-                    )));
+                    return Err(Box::new(
+                        Diagnostic::error(
+                            "STK1003",
+                            "Strings cannot contain line breaks or tabs.",
+                            span,
+                        )
+                        .with_help(
+                            "Remove the line break or tab; Stack strings must stay on one line.",
+                        ),
+                    ));
                 }
                 value_character if value_character.is_control() => {
                     let span = Span {
                         start: self.position,
                         end: self.position_after_current(),
                     };
-                    return Err(Box::new(Diagnostic::error(
-                        "STK1003",
-                        "Strings cannot contain control characters.",
-                        span,
-                    )));
+                    return Err(Box::new(
+                        Diagnostic::error(
+                            "STK1003",
+                            "Strings cannot contain control characters.",
+                            span,
+                        )
+                        .with_help("Remove the control character from the string."),
+                    ));
                 }
                 value_character => {
                     value.push(value_character);
@@ -257,14 +272,18 @@ impl<'source> Lexer<'source> {
     fn lex_escape(&mut self, value: &mut String, string_start: SourcePosition) -> LexResult<()> {
         let escape_start = self.position;
         let Some(character) = self.peek() else {
-            return Err(Box::new(Diagnostic::error(
-                "STK1003",
-                "Input ended inside a string escape.",
-                Span {
-                    start: string_start,
-                    end: self.position,
-                },
-            )));
+            return Err(Box::new(
+                Diagnostic::error(
+                    "STK1003",
+                    "Input ended inside a string escape.",
+                    Span {
+                        start: string_start,
+                        end: self.position,
+                    },
+                )
+                .with_expected([r#"\""#, r#"\\"#, r#"\uXXXX"#])
+                .with_help("Complete the escape using a supported Stack string escape."),
+            ));
         };
 
         match character {
@@ -303,14 +322,19 @@ impl<'source> Lexer<'source> {
                     return Err(self.invalid_escape(escape_start));
                 };
                 if decoded.is_control() || matches!(decoded, '\n' | '\r' | '\t') {
-                    return Err(Box::new(Diagnostic::error(
-                        "STK1003",
-                        "A string escape decoded to a prohibited control value.",
-                        Span {
-                            start: escape_start,
-                            end: self.position,
-                        },
-                    )));
+                    return Err(Box::new(
+                        Diagnostic::error(
+                            "STK1003",
+                            "A string escape decoded to a prohibited control value.",
+                            Span {
+                                start: escape_start,
+                                end: self.position,
+                            },
+                        )
+                        .with_help(
+                            "Use a printable Unicode scalar that is not a line break or tab.",
+                        ),
+                    ));
                 }
                 value.push(decoded);
             }
@@ -337,25 +361,32 @@ impl<'source> Lexer<'source> {
     }
 
     fn invalid_escape(&self, start: SourcePosition) -> Box<Diagnostic> {
-        Box::new(Diagnostic::error(
-            "STK1003",
-            "The string contains an invalid escape.",
-            Span {
-                start,
-                end: self.position,
-            },
-        ))
+        Box::new(
+            Diagnostic::error(
+                "STK1003",
+                "The string contains an invalid escape.",
+                Span {
+                    start,
+                    end: self.position,
+                },
+            )
+            .with_expected([r#"\""#, r#"\\"#, r#"\uXXXX"#])
+            .with_help("Use an escaped double quote, backslash, or Unicode code unit."),
+        )
     }
 
     fn invalid_surrogate(&self, start: SourcePosition) -> Box<Diagnostic> {
-        Box::new(Diagnostic::error(
-            "STK1003",
-            "The string contains an unpaired Unicode surrogate.",
-            Span {
-                start,
-                end: self.position,
-            },
-        ))
+        Box::new(
+            Diagnostic::error(
+                "STK1003",
+                "The string contains an unpaired Unicode surrogate.",
+                Span {
+                    start,
+                    end: self.position,
+                },
+            )
+            .with_help("Pair high and low surrogates or use a non-surrogate Unicode code unit."),
+        )
     }
 
     fn lex_bare(&mut self) -> TokenKind {
@@ -512,12 +543,26 @@ mod tests {
             let result = tokenize(source);
             assert!(matches!(result, Err(diagnostic) if diagnostic.code == "STK1003"));
         }
+
+        let invalid_escape = tokenize(r#""\n""#);
+        assert!(matches!(
+            invalid_escape,
+            Err(diagnostic)
+                if diagnostic.expected == [r#"\""#, r#"\\"#, r#"\uXXXX"#]
+                    && diagnostic.help.is_some()
+        ));
     }
 
     #[test]
     fn reports_an_unterminated_string() {
         let result = tokenize("\"unfinished");
-        assert!(matches!(result, Err(diagnostic) if diagnostic.code == "STK2003"));
+        assert!(matches!(
+            result,
+            Err(diagnostic)
+                if diagnostic.code == "STK2003"
+                    && diagnostic.expected == ["\""]
+                    && diagnostic.help.as_deref() == Some("Add a closing double quote.")
+        ));
     }
 
     #[test]

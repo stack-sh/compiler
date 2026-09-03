@@ -226,6 +226,7 @@ fn invalid_utf8_diagnostic(source: &[u8], error: std::str::Utf8Error) -> Diagnos
         "Input is not valid UTF-8.",
         diagnostic::Span::point(position),
     )
+    .with_help("Save the source as UTF-8 and replace the invalid byte sequence.")
 }
 
 #[cfg(test)]
