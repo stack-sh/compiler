@@ -10,6 +10,7 @@ pub mod ast;
 pub mod diagnostic;
 pub mod ir;
 pub mod lossless;
+pub mod source_map;
 
 mod lexer;
 mod parser;
@@ -41,6 +42,17 @@ pub struct LosslessParseOutput {
     /// Lossless document, present only when lexical and syntax parsing succeeds.
     pub document: Option<lossless::Document>,
     /// Lexical and syntax diagnostics.
+    pub diagnostics: Vec<Diagnostic>,
+}
+
+/// Output of compilation with the Rust-only source-map sidecar.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceMappedCompileOutput {
+    /// Normalized diagram, present only when no compiler-stage error occurred.
+    pub diagram: Option<ir::Diagram>,
+    /// Source map corresponding to `diagram`, absent whenever `diagram` is absent.
+    pub source_map: Option<source_map::SourceMap>,
+    /// Lexical, syntax, semantic, and complexity diagnostics.
     pub diagnostics: Vec<Diagnostic>,
 }
 
@@ -133,6 +145,53 @@ pub fn compile_bytes(source: &[u8]) -> CompileOutput {
     }
 }
 
+/// Parses, validates, and normalizes source with an engine-facing source map.
+pub fn compile_with_source_map(source: &str) -> SourceMappedCompileOutput {
+    let tokens = match lexer::tokenize(source) {
+        Ok(tokens) => tokens,
+        Err(diagnostic) => {
+            return SourceMappedCompileOutput {
+                diagram: None,
+                source_map: None,
+                diagnostics: vec![*diagnostic],
+            };
+        }
+    };
+    let document = match parser::parse_tokens(tokens.clone()) {
+        Ok(document) => document,
+        Err(diagnostic) => {
+            return SourceMappedCompileOutput {
+                diagram: None,
+                source_map: None,
+                diagnostics: vec![*diagnostic],
+            };
+        }
+    };
+    let compiled = validate(&document);
+    let source_map = compiled.diagram.as_ref().map(|_| {
+        let lossless = lossless::Document::from_lexer_tokens(source, tokens);
+        source_map::SourceMap::from_document(&document, &lossless)
+    });
+
+    SourceMappedCompileOutput {
+        diagram: compiled.diagram,
+        source_map,
+        diagnostics: compiled.diagnostics,
+    }
+}
+
+/// Decodes and compiles source bytes with an engine-facing source map.
+pub fn compile_bytes_with_source_map(source: &[u8]) -> SourceMappedCompileOutput {
+    match std::str::from_utf8(source) {
+        Ok(source) => compile_with_source_map(source),
+        Err(error) => SourceMappedCompileOutput {
+            diagram: None,
+            source_map: None,
+            diagnostics: vec![invalid_utf8_diagnostic(source, error)],
+        },
+    }
+}
+
 fn position_after_valid_prefix(prefix: &[u8]) -> diagnostic::SourcePosition {
     let source = match std::str::from_utf8(prefix) {
         Ok(source) => source,
@@ -172,10 +231,11 @@ fn invalid_utf8_diagnostic(source: &[u8], error: std::str::Utf8Error) -> Diagnos
 #[cfg(test)]
 mod tests {
     use crate::lossless::TokenKind;
+    use crate::source_map::{LayoutScope, SourceOrigin};
 
     use super::{
-        compile, compile_bytes, parse, parse_bytes, parse_lossless, parse_lossless_bytes,
-        position_after_valid_prefix, validate,
+        compile, compile_bytes, compile_bytes_with_source_map, compile_with_source_map, parse,
+        parse_bytes, parse_lossless, parse_lossless_bytes, position_after_valid_prefix, validate,
     };
 
     #[test]
@@ -279,5 +339,124 @@ mod tests {
 
         assert!(parse_lossless(source).document.is_some());
         assert!(compile(source).diagram.is_none());
+    }
+
+    #[test]
+    fn source_map_resolves_authored_values_by_semantic_identity() {
+        let source = concat!(
+            "stack 1.0\n",
+            "diagram \"Mapped\" {\n",
+            "  node root \"Root\"\n",
+            "  group services \"Services\" {\n",
+            "    node api \"API\" { icon \"service\" }\n",
+            "    node worker \"Worker\"\n",
+            "    layout {\n",
+            "      order // Group order\n",
+            "        [api, worker]\n",
+            "    }\n",
+            "  }\n",
+            "  theme dark\n",
+            "  layout { order [root, services] }\n",
+            "}\n",
+        );
+
+        let mapped = compile_with_source_map(source);
+        let plain = compile(source);
+        assert_eq!(mapped.diagram, plain.diagram);
+        assert_eq!(mapped.diagnostics, plain.diagnostics);
+        let Some(source_map) = mapped.source_map else {
+            return;
+        };
+
+        assert_eq!(authored_text(source, source_map.theme()), Some("dark"));
+        assert_eq!(source_map.node_icon("root"), Some(SourceOrigin::Omitted));
+        assert_eq!(source_map.node_icon("worker"), Some(SourceOrigin::Omitted));
+        assert_eq!(source_map.node_icon("missing"), None);
+        let Some(api_icon) = source_map.node_icon("api") else {
+            return;
+        };
+        assert_eq!(authored_text(source, api_icon), Some("\"service\""));
+        assert_eq!(
+            source_map
+                .node_icons()
+                .iter()
+                .map(|entry| entry.node_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["root", "api", "worker"]
+        );
+
+        assert_eq!(
+            authored_text(source, source_map.diagram_order()),
+            Some("order [root, services]")
+        );
+        let Some(group_order) = source_map.group_order("services") else {
+            return;
+        };
+        assert_eq!(
+            authored_text(source, group_order),
+            Some("order // Group order\n        [api, worker]")
+        );
+        assert_eq!(source_map.group_order("missing"), None);
+        assert!(matches!(
+            source_map.layout_orders()[0].scope,
+            LayoutScope::Diagram
+        ));
+        assert!(matches!(
+            &source_map.layout_orders()[1].scope,
+            LayoutScope::Group(identifier) if identifier == "services"
+        ));
+
+        assert_eq!(
+            compile_with_source_map(source).source_map,
+            Some(source_map.clone())
+        );
+        assert_eq!(
+            compile_bytes_with_source_map(source.as_bytes()).source_map,
+            Some(source_map)
+        );
+    }
+
+    #[test]
+    fn source_map_distinguishes_defaults_and_rejects_error_results() {
+        let source = concat!(
+            "stack 1.0 ",
+            "diagram \"Default\" { ",
+            "group services \"Services\" { node api \"API\" } ",
+            "}",
+        );
+        let output = compile_with_source_map(source);
+        let Some(source_map) = output.source_map else {
+            return;
+        };
+        assert_eq!(source_map.theme(), SourceOrigin::Omitted);
+        assert_eq!(source_map.node_icon("api"), Some(SourceOrigin::Omitted));
+        assert_eq!(source_map.diagram_order(), SourceOrigin::Omitted);
+        assert_eq!(
+            source_map.group_order("services"),
+            Some(SourceOrigin::Omitted)
+        );
+        assert_eq!(source_map.layout_orders().len(), 2);
+
+        for invalid in [
+            "\u{feff}stack 1.0",
+            "stack 1.0 diagram \"Incomplete\" {",
+            "stack 1.0 diagram \"Duplicate\" { node api \"A\" node api \"B\" }",
+        ] {
+            let output = compile_with_source_map(invalid);
+            assert!(output.diagram.is_none());
+            assert!(output.source_map.is_none());
+            assert!(!output.diagnostics.is_empty());
+        }
+
+        let encoding = compile_bytes_with_source_map(b"stack 1.0\n\xff");
+        assert!(encoding.diagram.is_none());
+        assert!(encoding.source_map.is_none());
+        assert_eq!(encoding.diagnostics[0].code, "STK1001");
+    }
+
+    fn authored_text(source: &str, origin: SourceOrigin) -> Option<&str> {
+        origin
+            .span()
+            .map(|span| &source[span.start.byte_offset..span.end.byte_offset])
     }
 }

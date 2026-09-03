@@ -52,6 +52,10 @@ JSON support is development-only and does not add a runtime dependency to the co
 
 Lossless parsing succeeds for syntactically valid source even when semantic validation would later reject it. Lexical and syntax errors return diagnostics without a partial document.
 
+## Source-Map Sidecar
+
+`compile_with_source_map` and `compile_bytes_with_source_map` return normalized IR together with a Rust-only `SourceMap`. The sidecar resolves the diagram theme, every node icon, and every diagram or group order hint from semantic identity to either an authored source span or `SourceOrigin::Omitted`. It is deterministic, has no portable JSON representation, and is absent whenever compiler-stage errors prevent normalized IR.
+
 ## Architecture
 
 - [`docs/decisions/0001-build-a-portable-rust-compiler-core.md`](./docs/decisions/0001-build-a-portable-rust-compiler-core.md)
@@ -59,6 +63,7 @@ Lossless parsing succeeds for syntactically valid source even when semantic vali
 - [`docs/decisions/0003-use-a-handwritten-parser.md`](./docs/decisions/0003-use-a-handwritten-parser.md)
 - [`docs/decisions/0004-consume-a-pinned-conformance-suite.md`](./docs/decisions/0004-consume-a-pinned-conformance-suite.md)
 - [`docs/decisions/0005-add-a-lossless-source-model.md`](./docs/decisions/0005-add-a-lossless-source-model.md)
+- [`docs/decisions/0006-add-a-source-map-sidecar.md`](./docs/decisions/0006-add-a-source-map-sidecar.md)
 - [`docs/specs/compiler-frontend.md`](./docs/specs/compiler-frontend.md)
 
 ## License
