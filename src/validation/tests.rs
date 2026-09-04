@@ -1,7 +1,7 @@
 use crate::diagnostic::Severity;
 use crate::ir::{Direction, EdgeDirection, EdgeKind, ElementId, NodeKind};
 
-use super::levenshtein;
+use super::{is_icon_identifier, levenshtein};
 
 fn compile(source: &str) -> crate::CompileOutput {
     crate::compile(source)
@@ -123,6 +123,43 @@ diagram "Icons" {
     let codes = codes(&output);
     assert!(codes.contains(&"STK3013"));
     assert!(codes.contains(&"STK3008"));
+}
+
+#[test]
+fn validation_accepts_theme_and_provider_icon_identifiers() {
+    for identifier in [
+        "api",
+        "1password",
+        "aws:s3",
+        "gcp:cloud-run",
+        "azure:storage-accounts",
+    ] {
+        assert!(is_icon_identifier(identifier), "rejected {identifier}");
+    }
+    for identifier in [
+        "Bad_icon",
+        "a:s3",
+        "AWS:s3",
+        "aws:",
+        "aws:_s3",
+        "aws:s3:object",
+    ] {
+        assert!(!is_icon_identifier(identifier), "accepted {identifier}");
+    }
+
+    let output = compile(
+        r#"stack 1.0
+diagram "Provider" {
+  node assets "Amazon S3" { kind storage icon "aws:s3" }
+}"#,
+    );
+    assert!(output.diagnostics.is_empty());
+    assert_eq!(
+        output
+            .diagram
+            .and_then(|diagram| diagram.nodes[0].icon_id.clone()),
+        Some("aws:s3".to_owned())
+    );
 }
 
 #[test]
