@@ -101,7 +101,7 @@ pub struct Node {
 pub enum NodeProperty {
     /// Authored node kind.
     Kind(Spanned<String>),
-    /// Authored theme-local icon identifier.
+    /// Authored theme or namespaced provider icon identifier.
     Icon(Spanned<String>),
     /// Authored visible detail.
     Detail(Spanned<String>),

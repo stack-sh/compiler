@@ -669,7 +669,7 @@ impl<'document> Validator<'document> {
                     identifier.span,
                 )
                 .with_help(
-                    "Use 1 to 64 lowercase ASCII letters, digits, or hyphens, starting with a letter or digit.",
+                    "Use an icon name of 1 to 64 lowercase ASCII letters, digits, or hyphens, optionally prefixed by a lowercase provider namespace and one colon.",
                 ),
             );
         }
@@ -841,6 +841,24 @@ fn is_identifier(value: &str) -> bool {
 }
 
 fn is_icon_identifier(value: &str) -> bool {
+    match value.split_once(':') {
+        Some((provider, icon)) => {
+            !icon.contains(':') && is_provider_namespace(provider) && is_icon_name(icon)
+        }
+        None => is_icon_name(value),
+    }
+}
+
+fn is_provider_namespace(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    (2..=32).contains(&bytes.len())
+        && bytes[0].is_ascii_lowercase()
+        && bytes[1..]
+            .iter()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || *byte == b'-')
+}
+
+fn is_icon_name(value: &str) -> bool {
     let bytes = value.as_bytes();
     (1..=64).contains(&bytes.len())
         && (bytes[0].is_ascii_lowercase() || bytes[0].is_ascii_digit())

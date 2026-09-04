@@ -57,7 +57,7 @@ pub struct Node {
     pub label: String,
     /// Effective semantic node kind.
     pub kind: NodeKind,
-    /// Optional theme-local icon identifier.
+    /// Optional theme or namespaced provider icon identifier.
     pub icon_id: Option<String>,
     /// Optional visible detail.
     pub detail: Option<String>,
