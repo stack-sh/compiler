@@ -19,6 +19,9 @@ jobs:
       - name: Install latest stable Rust toolchain
         run: rustup toolchain install stable --profile minimal --component clippy,rustfmt,llvm-tools-preview
 
+      - name: Install WebAssembly target
+        run: rustup target add --toolchain stable wasm32-unknown-unknown
+
       - name: Verify crates.io package
         run: cargo +stable publish --dry-run --locked
 
@@ -46,7 +49,10 @@ jobs:
       - name: Run canonical conformance suite
         env:
           STACK_SPECIFICATION_DIR: .stack-specification
-        run: cargo +stable test --features conformance --test conformance
+        run: cargo +stable test --features conformance --test conformance --test language_intelligence_conformance
+
+      - name: Cross-build language intelligence for WebAssembly
+        run: cargo +stable build --lib --target wasm32-unknown-unknown --locked
 
       - name: Run Clippy
         run: cargo +stable clippy --all-targets --all-features -- -D warnings

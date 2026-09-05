@@ -51,10 +51,18 @@ The language-independent schemas and fixtures live in [`stack-sh/specification`]
 Run the canonical suite against a local specification checkout:
 
 ```sh
-STACK_SPECIFICATION_DIR=../specification cargo test --features conformance --test conformance
+STACK_SPECIFICATION_DIR=../specification cargo test --features conformance --test conformance --test language_intelligence_conformance
 ```
 
 JSON support is development-only and does not add a runtime dependency to the compiler library. CI checks out the recorded specification revision before running the suite.
+
+## Language Intelligence
+
+The `language_intelligence` module implements the protocol-neutral [Stack language-intelligence contract](https://github.com/stack-sh/specification/blob/main/LANGUAGE_INTELLIGENCE.md). Its stateless APIs return diagnostics, semantic completion, plain-text hover information, and hierarchical document symbols for one complete source snapshot. Each response echoes the caller's document version.
+
+Completion accepts an explicit, bounded caller-owned icon catalog. The compiler never fetches a catalog or interprets its labels and documentation as markup. Source positions combine a zero-based UTF-8 byte offset with one-based Unicode-scalar line and column coordinates; inconsistent positions are rejected before analysis.
+
+Editor and transport adapters own document synchronization, cancellation, stale-result filtering, and conversion from protocol-specific coordinates such as UTF-16. Formatting remains owned by the canonical formatter. CI compares the native types with the pinned canonical fixtures and cross-builds the same dependency-free core for `wasm32-unknown-unknown`; a JavaScript or LSP binding is intentionally outside this crate.
 
 ## Lossless Source Model
 
@@ -74,6 +82,7 @@ Lossless parsing succeeds for syntactically valid source even when semantic vali
 - [`docs/decisions/0004-consume-a-pinned-conformance-suite.md`](./docs/decisions/0004-consume-a-pinned-conformance-suite.md)
 - [`docs/decisions/0005-add-a-lossless-source-model.md`](./docs/decisions/0005-add-a-lossless-source-model.md)
 - [`docs/decisions/0006-add-a-source-map-sidecar.md`](./docs/decisions/0006-add-a-source-map-sidecar.md)
+- [`docs/decisions/0007-add-protocol-neutral-language-intelligence.md`](./docs/decisions/0007-add-protocol-neutral-language-intelligence.md)
 - [`docs/specs/compiler-frontend.md`](./docs/specs/compiler-frontend.md)
 
 ## License

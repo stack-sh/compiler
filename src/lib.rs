@@ -9,6 +9,7 @@
 pub mod ast;
 pub mod diagnostic;
 pub mod ir;
+pub mod language_intelligence;
 pub mod lossless;
 pub mod source_map;
 
