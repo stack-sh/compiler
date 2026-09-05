@@ -16,6 +16,9 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
 
+      - name: Test initial publication guards
+        run: node --test scripts/initial-publish-context.test.mjs
+
       - name: Install latest stable Rust toolchain
         run: rustup toolchain install stable --profile minimal --component clippy,rustfmt,llvm-tools-preview
 

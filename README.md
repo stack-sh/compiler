@@ -20,6 +20,8 @@ cargo add stack-compiler@0.1.0
 
 The published package is built and documented on Rust 1.85 or newer. Repository CI performs a full crates.io packaging dry run so the released source archive remains independent of Git checkouts.
 
+Maintainers follow the [initial publication procedure](./docs/releasing.md) before the first registry release.
+
 ## Pipeline
 
 ```text
