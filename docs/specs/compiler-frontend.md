@@ -35,6 +35,8 @@ src/source_map.rs   Engine-facing source origins by semantic identity
 src/validation.rs   Semantic validation and normalization
 src/validation/     Focused validation unit tests
 src/ir.rs           Renderer-independent normalized model
+src/language_intelligence.rs
+                    Stateless diagnostics, completion, hover, and symbols
 src/lib.rs          Public parse and compile APIs
 tests/              Public API and conformance-oriented tests
 tests/specification-revision
@@ -53,6 +55,21 @@ pub fn compile(source: &str) -> CompileOutput;
 pub fn compile_bytes(source: &[u8]) -> CompileOutput;
 pub fn compile_with_source_map(source: &str) -> SourceMappedCompileOutput;
 pub fn compile_bytes_with_source_map(source: &[u8]) -> SourceMappedCompileOutput;
+
+pub fn diagnostics(source: &str, document_version: u64) -> DiagnosticsOutput;
+pub fn diagnostics_bytes(source: &[u8], document_version: u64) -> DiagnosticsOutput;
+pub fn completion(
+    source: &str,
+    document_version: u64,
+    position: SourcePosition,
+    catalog: &CompletionCatalog,
+) -> Result<CompletionOutput, IntelligenceError>;
+pub fn hover(
+    source: &str,
+    document_version: u64,
+    position: SourcePosition,
+) -> Result<HoverOutput, IntelligenceError>;
+pub fn document_symbols(source: &str, document_version: u64) -> DocumentSymbolsOutput;
 ```
 
 `ParseOutput` contains an AST only when decoding, lexing, and parsing succeed. `CompileOutput` contains normalized IR only when all compiler-stage errors are absent. Both outputs contain diagnostics. Semantic warnings may accompany successful IR.
@@ -60,6 +77,12 @@ pub fn compile_bytes_with_source_map(source: &[u8]) -> SourceMappedCompileOutput
 `LosslessParseOutput` contains an exact token-and-trivia document only when decoding, lexing, and syntax parsing succeed. Its tokens retain original text and spans, while string tokens additionally expose decoded values. Reconstructing the document concatenates every token and trivia segment without normalization. Semantic validation remains a separate stage.
 
 `SourceMappedCompileOutput` pairs successful normalized IR with a Rust-only source map. The sidecar identifies authored theme and icon values and complete layout order statements, while explicitly distinguishing omitted defaults. Compiler-stage errors suppress both IR and the source map. The normalized IR types and canonical JSON schema contain no source-map fields.
+
+The `language_intelligence` module implements portable editor semantics without adopting an editor protocol. Calls analyze one complete immutable source snapshot and echo its caller-owned document version. Diagnostics are always returned. Completion may recover useful candidates from incomplete syntax; hover and document symbols are empty when parsing cannot establish a trustworthy construct. Syntactically valid documents may still return hover and symbol structure alongside semantic errors.
+
+Completion uses a request-local `CompletionCatalog`; the compiler validates its size, identifiers, and plain-text fields but performs no catalog discovery. Request positions must be UTF-8 scalar boundaries whose byte offset, line, and Unicode-scalar column agree. Protocol adapters own position-encoding conversion, incremental document state, cancellation, and stale-result filtering.
+
+Formatting is absent from this module because canonical source edits belong to the formatter. Runtime serialization and LSP or JavaScript bindings also remain adapter responsibilities. The dependency-free library cross-builds to `wasm32-unknown-unknown`, so native and WebAssembly consumers execute the same semantic core.
 
 ## Code Style
 
@@ -84,6 +107,8 @@ match operator {
 - Unit tests cover lexer escapes, positions, parser productions, defaults, and each implemented diagnostic.
 - Integration tests exercise public `parse` and `compile` APIs.
 - Feature-gated integration tests execute the canonical conformance suite from the recorded specification revision.
+- Language-intelligence conformance maps native types to the canonical JSON fixtures in a development-only adapter and checks every compiler-owned operation exactly.
+- CI cross-builds the library for `wasm32-unknown-unknown` to keep language-intelligence semantics portable without adding a target-specific runtime API.
 - Invalid cases assert stable diagnostic codes rather than entire prose messages.
 - Library unit-test line, function, and region coverage must each remain at or above 95 percent.
 - Every compiler change must pass formatting, tests, coverage, Clippy, and documentation builds.
@@ -129,4 +154,5 @@ match operator {
 - Theme and icon resolution
 - Layout and renderer integration
 - Multi-error syntax recovery
+- LSP, JavaScript, and other protocol or runtime bindings
 - Native Rust API stabilization and package versioning
