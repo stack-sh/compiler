@@ -10,6 +10,16 @@ Stack 1.0 and this compiler are both under active development. Public Rust APIs 
 
 Development and primary CI follow the latest stable Rust and Cargo releases through [`rust-toolchain.toml`](./rust-toolchain.toml). Rust 1.85 remains the minimum supported version and is verified in a separate CI job.
 
+## Cargo package
+
+Add the compiler library from crates.io with:
+
+```sh
+cargo add stack-compiler@0.1.0
+```
+
+The published package is built and documented on Rust 1.85 or newer. Repository CI performs a full crates.io packaging dry run so the released source archive remains independent of Git checkouts.
+
 ## Pipeline
 
 ```text

@@ -53,6 +53,9 @@ jobs:
           RUSTDOCFLAGS: -D warnings
         run: cargo +stable doc --no-deps
 
+      - name: Verify crates.io package
+        run: cargo +stable publish --dry-run --locked
+
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@e67fa11c4b9316fa714ddf0abed07a0c3143b95b # v2.87.4
         with:

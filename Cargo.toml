@@ -5,8 +5,12 @@ edition = "2024"
 rust-version = "1.85"
 license = "Apache-2.0"
 description = "Reference compiler frontend for the Stack diagram language"
+homepage = "https://stack-diagram.com/"
 repository = "https://github.com/stack-sh/compiler"
+documentation = "https://docs.rs/stack-compiler"
 readme = "README.md"
+publish = ["crates-io"]
+include = ["src/**", "tests/**", "Cargo.toml", "README.md", "LICENSE"]
 keywords = ["stack", "diagram", "dsl", "compiler"]
 categories = ["parser-implementations"]
 
