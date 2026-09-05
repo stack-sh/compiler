@@ -25,6 +25,11 @@ name = "conformance"
 path = "tests/conformance.rs"
 required-features = ["conformance"]
 
+[[test]]
+name = "language_intelligence_conformance"
+path = "tests/language_intelligence_conformance.rs"
+required-features = ["conformance"]
+
 [dev-dependencies]
 serde_json = "1.0.151"
 
