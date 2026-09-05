@@ -93,6 +93,92 @@ pub struct CompletionOutput {
     pub items: Vec<CompletionItem>,
 }
 
+/// Semantic category described by hover information.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HoverKind {
+    /// The document's diagram declaration.
+    Diagram,
+    /// A containment group.
+    Group,
+    /// A node declaration or reference.
+    Node,
+    /// An edge declaration.
+    Edge,
+    /// A language property, theme, or layout value.
+    Property,
+}
+
+/// Plain-text semantic information for one source token.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Hover {
+    /// Exact source range described by this hover.
+    pub range: Span,
+    /// Semantic category.
+    pub kind: HoverKind,
+    /// Short user-visible label.
+    pub label: String,
+    /// Optional plain-text secondary label.
+    pub detail: Option<String>,
+    /// Optional plain-text documentation.
+    pub documentation: Option<String>,
+}
+
+/// Hover result for one caller-owned document version.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HoverOutput {
+    /// Portable schema version.
+    pub schema_version: &'static str,
+    /// Document version supplied by the caller.
+    pub document_version: u64,
+    /// Ordered compiler diagnostics for the same source snapshot.
+    pub diagnostics: Vec<Diagnostic>,
+    /// Resolved hover, or `None` when no trustworthy construct covers the position.
+    pub hover: Option<Hover>,
+}
+
+/// Semantic category of a document symbol.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DocumentSymbolKind {
+    /// The document's diagram declaration.
+    Diagram,
+    /// A containment group.
+    Group,
+    /// A node declaration.
+    Node,
+    /// A diagram-scope edge declaration.
+    Edge,
+}
+
+/// One hierarchical source declaration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DocumentSymbol {
+    /// User-visible label or concise edge description.
+    pub name: String,
+    /// Semantic symbol category.
+    pub kind: DocumentSymbolKind,
+    /// Optional stable plain-text secondary information.
+    pub detail: Option<String>,
+    /// Complete declaration range.
+    pub range: Span,
+    /// Most useful authored token within the declaration.
+    pub selection_range: Span,
+    /// Directly nested declarations in source order.
+    pub children: Vec<DocumentSymbol>,
+}
+
+/// Hierarchical document symbols for one caller-owned document version.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DocumentSymbolsOutput {
+    /// Portable schema version.
+    pub schema_version: &'static str,
+    /// Document version supplied by the caller.
+    pub document_version: u64,
+    /// Ordered compiler diagnostics for the same source snapshot.
+    pub diagnostics: Vec<Diagnostic>,
+    /// Root diagram symbol, absent when syntax parsing fails.
+    pub symbols: Vec<DocumentSymbol>,
+}
+
 /// Compiler diagnostics for one caller-owned document version.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiagnosticsOutput {
@@ -212,6 +298,453 @@ pub fn completion(
         is_incomplete,
         items,
     })
+}
+
+/// Resolves plain-text semantic hover for one complete UTF-8 source snapshot.
+pub fn hover(
+    source: &str,
+    document_version: u64,
+    position: SourcePosition,
+) -> Result<HoverOutput, IntelligenceError> {
+    validate_position(source, position)?;
+    let parsed = parse(source);
+    let compiled = compile(source);
+    let resolved = parsed
+        .document
+        .as_ref()
+        .and_then(|document| hover_for_document(document, position.byte_offset));
+    Ok(HoverOutput {
+        schema_version: SCHEMA_VERSION,
+        document_version,
+        diagnostics: compiled.diagnostics,
+        hover: resolved,
+    })
+}
+
+/// Builds hierarchical symbols for one complete UTF-8 source snapshot.
+pub fn document_symbols(source: &str, document_version: u64) -> DocumentSymbolsOutput {
+    let parsed = parse(source);
+    let compiled = compile(source);
+    let symbols = parsed
+        .document
+        .as_ref()
+        .map(diagram_symbol)
+        .into_iter()
+        .collect();
+    DocumentSymbolsOutput {
+        schema_version: SCHEMA_VERSION,
+        document_version,
+        diagnostics: compiled.diagnostics,
+        symbols,
+    }
+}
+
+fn hover_for_document(document: &ast::Document, byte_offset: usize) -> Option<Hover> {
+    if contains(document.diagram.title.span, byte_offset) {
+        return Some(Hover {
+            range: document.diagram.title.span,
+            kind: HoverKind::Diagram,
+            label: document.diagram.title.value.clone(),
+            detail: Some(format!(
+                "Stack {}.{} diagram",
+                document.version.major, document.version.minor
+            )),
+            documentation: None,
+        });
+    }
+
+    hover_in_diagram_members(document, &document.diagram.members, byte_offset)
+}
+
+fn hover_in_diagram_members(
+    document: &ast::Document,
+    members: &[ast::DiagramMember],
+    byte_offset: usize,
+) -> Option<Hover> {
+    for member in members {
+        let result = match member {
+            ast::DiagramMember::Node(node) => hover_for_node(node, byte_offset),
+            ast::DiagramMember::Group(group) => hover_for_group(document, group, byte_offset),
+            ast::DiagramMember::Edge(edge) => hover_for_edge(document, edge, byte_offset),
+            ast::DiagramMember::Theme(theme) if contains(theme.identifier.span, byte_offset) => {
+                Some(property_hover(
+                    theme.identifier.span,
+                    &theme.identifier.value,
+                    "theme",
+                ))
+            }
+            ast::DiagramMember::Layout(layout) => hover_for_layout(document, layout, byte_offset),
+            ast::DiagramMember::Theme(_) => None,
+        };
+        if result.is_some() {
+            return result;
+        }
+    }
+    None
+}
+
+fn hover_for_group(
+    document: &ast::Document,
+    group: &ast::Group,
+    byte_offset: usize,
+) -> Option<Hover> {
+    if contains(group.identifier.span, byte_offset) || contains(group.label.span, byte_offset) {
+        let range = if contains(group.identifier.span, byte_offset) {
+            group.identifier.span
+        } else {
+            group.label.span
+        };
+        return Some(Hover {
+            range,
+            kind: HoverKind::Group,
+            label: group.label.value.clone(),
+            detail: Some(format!("group {}", group.identifier.value)),
+            documentation: None,
+        });
+    }
+    for member in &group.members {
+        let result = match member {
+            ast::GroupMember::Node(node) => hover_for_node(node, byte_offset),
+            ast::GroupMember::Group(child) => hover_for_group(document, child, byte_offset),
+            ast::GroupMember::Layout(layout) => hover_for_layout(document, layout, byte_offset),
+        };
+        if result.is_some() {
+            return result;
+        }
+    }
+    None
+}
+
+fn hover_for_node(node: &ast::Node, byte_offset: usize) -> Option<Hover> {
+    if contains(node.identifier.span, byte_offset) || contains(node.label.span, byte_offset) {
+        let range = if contains(node.identifier.span, byte_offset) {
+            node.identifier.span
+        } else {
+            node.label.span
+        };
+        return Some(node_hover(node, range));
+    }
+    for property in &node.properties {
+        if contains(property.span(), byte_offset) {
+            return Some(match property {
+                ast::NodeProperty::Kind(value) => {
+                    property_hover(value.span, &value.value, "node kind")
+                }
+                ast::NodeProperty::Icon(value) => property_hover(value.span, &value.value, "icon"),
+                ast::NodeProperty::Detail(value) => {
+                    property_hover(value.span, &value.value, "node detail")
+                }
+            });
+        }
+    }
+    None
+}
+
+fn hover_for_edge(document: &ast::Document, edge: &ast::Edge, byte_offset: usize) -> Option<Hover> {
+    for reference in [&edge.from, &edge.to] {
+        if contains(reference.span, byte_offset) {
+            return find_node(&document.diagram.members, &reference.value)
+                .map(|node| node_hover(node, reference.span));
+        }
+    }
+    if contains(edge.operator.span, byte_offset)
+        || edge
+            .label
+            .as_ref()
+            .is_some_and(|label| contains(label.span, byte_offset))
+    {
+        let range = edge
+            .label
+            .as_ref()
+            .filter(|label| contains(label.span, byte_offset))
+            .map_or(edge.operator.span, |label| label.span);
+        return Some(Hover {
+            range,
+            kind: HoverKind::Edge,
+            label: edge
+                .label
+                .as_ref()
+                .map_or_else(|| edge_name(edge), |label| label.value.clone()),
+            detail: Some(edge_detail(edge)),
+            documentation: None,
+        });
+    }
+    for property in &edge.properties {
+        if contains(property.span(), byte_offset) {
+            return Some(match property {
+                ast::EdgeProperty::Kind(value) => {
+                    property_hover(value.span, &value.value, "edge kind")
+                }
+            });
+        }
+    }
+    None
+}
+
+fn hover_for_layout(
+    document: &ast::Document,
+    layout: &ast::Layout,
+    byte_offset: usize,
+) -> Option<Hover> {
+    for statement in &layout.statements {
+        let result = match statement {
+            ast::LayoutStatement::Direction(value) if contains(value.span, byte_offset) => {
+                Some(property_hover(value.span, &value.value, "layout direction"))
+            }
+            ast::LayoutStatement::RankSame(list) | ast::LayoutStatement::Order(list) => list
+                .identifiers
+                .iter()
+                .find(|identifier| contains(identifier.span, byte_offset))
+                .and_then(|identifier| {
+                    find_node(&document.diagram.members, &identifier.value)
+                        .map(|node| node_hover(node, identifier.span))
+                        .or_else(|| {
+                            find_group(&document.diagram.members, &identifier.value)
+                                .map(|group| group_hover(group, identifier.span))
+                        })
+                }),
+            ast::LayoutStatement::Direction(_) => None,
+        };
+        if result.is_some() {
+            return result;
+        }
+    }
+    None
+}
+
+fn node_hover(node: &ast::Node, range: Span) -> Hover {
+    Hover {
+        range,
+        kind: HoverKind::Node,
+        label: node.label.value.clone(),
+        detail: Some(node_detail(node)),
+        documentation: node.properties.iter().find_map(|property| match property {
+            ast::NodeProperty::Detail(value) => Some(value.value.clone()),
+            ast::NodeProperty::Kind(_) | ast::NodeProperty::Icon(_) => None,
+        }),
+    }
+}
+
+fn group_hover(group: &ast::Group, range: Span) -> Hover {
+    Hover {
+        range,
+        kind: HoverKind::Group,
+        label: group.label.value.clone(),
+        detail: Some(format!("group {}", group.identifier.value)),
+        documentation: None,
+    }
+}
+
+fn property_hover(range: Span, label: &str, detail: &str) -> Hover {
+    Hover {
+        range,
+        kind: HoverKind::Property,
+        label: label.into(),
+        detail: Some(detail.into()),
+        documentation: None,
+    }
+}
+
+fn diagram_symbol(document: &ast::Document) -> DocumentSymbol {
+    DocumentSymbol {
+        name: document.diagram.title.value.clone(),
+        kind: DocumentSymbolKind::Diagram,
+        detail: Some(format!(
+            "Stack {}.{} diagram",
+            document.version.major, document.version.minor
+        )),
+        range: document.diagram.span,
+        selection_range: document.diagram.title.span,
+        children: document
+            .diagram
+            .members
+            .iter()
+            .filter_map(diagram_member_symbol)
+            .collect(),
+    }
+}
+
+fn diagram_member_symbol(member: &ast::DiagramMember) -> Option<DocumentSymbol> {
+    match member {
+        ast::DiagramMember::Node(node) => Some(node_symbol(node)),
+        ast::DiagramMember::Group(group) => Some(group_symbol(group)),
+        ast::DiagramMember::Edge(edge) => Some(edge_symbol(edge)),
+        ast::DiagramMember::Theme(_) | ast::DiagramMember::Layout(_) => None,
+    }
+}
+
+fn group_symbol(group: &ast::Group) -> DocumentSymbol {
+    DocumentSymbol {
+        name: group.label.value.clone(),
+        kind: DocumentSymbolKind::Group,
+        detail: Some(format!("group {}", group.identifier.value)),
+        range: group.span,
+        selection_range: group.identifier.span,
+        children: group
+            .members
+            .iter()
+            .filter_map(group_member_symbol)
+            .collect(),
+    }
+}
+
+fn group_member_symbol(member: &ast::GroupMember) -> Option<DocumentSymbol> {
+    match member {
+        ast::GroupMember::Node(node) => Some(node_symbol(node)),
+        ast::GroupMember::Group(group) => Some(group_symbol(group)),
+        ast::GroupMember::Layout(_) => None,
+    }
+}
+
+fn node_symbol(node: &ast::Node) -> DocumentSymbol {
+    DocumentSymbol {
+        name: node.label.value.clone(),
+        kind: DocumentSymbolKind::Node,
+        detail: Some(node_detail(node)),
+        range: node.span,
+        selection_range: node.identifier.span,
+        children: Vec::new(),
+    }
+}
+
+fn edge_symbol(edge: &ast::Edge) -> DocumentSymbol {
+    DocumentSymbol {
+        name: edge_name(edge),
+        kind: DocumentSymbolKind::Edge,
+        detail: Some(edge_detail(edge)),
+        range: edge.span,
+        selection_range: Span::covering(edge.from.span, edge.to.span),
+        children: Vec::new(),
+    }
+}
+
+fn node_detail(node: &ast::Node) -> String {
+    let kind = node.properties.iter().find_map(|property| match property {
+        ast::NodeProperty::Kind(value) => Some(value.value.as_str()),
+        ast::NodeProperty::Icon(_) | ast::NodeProperty::Detail(_) => None,
+    });
+    format!(
+        "node {} · {}",
+        node.identifier.value,
+        kind.unwrap_or("service")
+    )
+}
+
+fn edge_name(edge: &ast::Edge) -> String {
+    format!(
+        "{} {} {}",
+        edge.from.value,
+        edge_operator_source(edge.operator.value),
+        edge.to.value
+    )
+}
+
+fn edge_detail(edge: &ast::Edge) -> String {
+    let kind = edge.properties.first().map(|property| match property {
+        ast::EdgeProperty::Kind(value) => value.value.as_str(),
+    });
+    format!(
+        "{} edge · {}",
+        edge_operator_name(edge.operator.value),
+        kind.unwrap_or("flow")
+    )
+}
+
+fn edge_operator_source(operator: ast::EdgeOperator) -> &'static str {
+    match operator {
+        ast::EdgeOperator::Forward => "->",
+        ast::EdgeOperator::Bidirectional => "<->",
+        ast::EdgeOperator::Association => "--",
+    }
+}
+
+fn edge_operator_name(operator: ast::EdgeOperator) -> &'static str {
+    match operator {
+        ast::EdgeOperator::Forward => "forward",
+        ast::EdgeOperator::Bidirectional => "bidirectional",
+        ast::EdgeOperator::Association => "association",
+    }
+}
+
+fn find_node<'document>(
+    members: &'document [ast::DiagramMember],
+    identifier: &str,
+) -> Option<&'document ast::Node> {
+    for member in members {
+        match member {
+            ast::DiagramMember::Node(node) if node.identifier.value == identifier => {
+                return Some(node);
+            }
+            ast::DiagramMember::Group(group) => {
+                if let Some(node) = find_node_in_group(&group.members, identifier) {
+                    return Some(node);
+                }
+            }
+            ast::DiagramMember::Node(_)
+            | ast::DiagramMember::Edge(_)
+            | ast::DiagramMember::Theme(_)
+            | ast::DiagramMember::Layout(_) => {}
+        }
+    }
+    None
+}
+
+fn find_node_in_group<'document>(
+    members: &'document [ast::GroupMember],
+    identifier: &str,
+) -> Option<&'document ast::Node> {
+    for member in members {
+        match member {
+            ast::GroupMember::Node(node) if node.identifier.value == identifier => {
+                return Some(node);
+            }
+            ast::GroupMember::Group(group) => {
+                if let Some(node) = find_node_in_group(&group.members, identifier) {
+                    return Some(node);
+                }
+            }
+            ast::GroupMember::Node(_) | ast::GroupMember::Layout(_) => {}
+        }
+    }
+    None
+}
+
+fn find_group<'document>(
+    members: &'document [ast::DiagramMember],
+    identifier: &str,
+) -> Option<&'document ast::Group> {
+    for member in members {
+        if let ast::DiagramMember::Group(group) = member {
+            if group.identifier.value == identifier {
+                return Some(group);
+            }
+            if let Some(found) = find_group_in_group(&group.members, identifier) {
+                return Some(found);
+            }
+        }
+    }
+    None
+}
+
+fn find_group_in_group<'document>(
+    members: &'document [ast::GroupMember],
+    identifier: &str,
+) -> Option<&'document ast::Group> {
+    for member in members {
+        if let ast::GroupMember::Group(group) = member {
+            if group.identifier.value == identifier {
+                return Some(group);
+            }
+            if let Some(found) = find_group_in_group(&group.members, identifier) {
+                return Some(found);
+            }
+        }
+    }
+    None
+}
+
+fn contains(span: Span, byte_offset: usize) -> bool {
+    span.start.byte_offset <= byte_offset && byte_offset < span.end.byte_offset
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -668,9 +1201,9 @@ fn optional_text_within(value: Option<&str>, maximum: usize) -> bool {
 mod tests {
     use super::{
         CompletionCatalog, CompletionCatalogEntry, CompletionContext, CompletionKind,
-        IntelligenceError, MAX_COMPLETION_ICONS, Scope, candidates_for, completion, diagnostics,
-        diagnostics_bytes, position_at_offset, scope_for_left_brace, validate_catalog,
-        validate_position,
+        DocumentSymbolKind, HoverKind, IntelligenceError, MAX_COMPLETION_ICONS, Scope,
+        candidates_for, completion, diagnostics, diagnostics_bytes, document_symbols, hover,
+        position_at_offset, scope_for_left_brace, validate_catalog, validate_position,
     };
     use crate::{diagnostic::SourcePosition, lexer};
 
@@ -681,6 +1214,27 @@ mod tests {
             detail: None,
             documentation: None,
         }
+    }
+
+    fn semantic_language_source() -> &'static str {
+        concat!(
+            "stack 1.0\n\n",
+            "diagram \"Checkout\" {\n",
+            "  theme dark\n\n",
+            "  node api \"API\" {\n",
+            "    kind service\n",
+            "    icon \"aws:s3\"\n",
+            "  }\n\n",
+            "  group data \"Data\" {\n",
+            "    node database \"Database\" {\n",
+            "      kind database\n",
+            "    }\n",
+            "  }\n\n",
+            "  edge api -> database \"SQL\" {\n",
+            "    kind data\n",
+            "  }\n",
+            "}\n",
+        )
     }
 
     #[test]
@@ -803,24 +1357,7 @@ mod tests {
 
     #[test]
     fn completion_matches_semantic_context_and_caller_catalog() {
-        let source = concat!(
-            "stack 1.0\n\n",
-            "diagram \"Checkout\" {\n",
-            "  theme dark\n\n",
-            "  node api \"API\" {\n",
-            "    kind service\n",
-            "    icon \"aws:s3\"\n",
-            "  }\n\n",
-            "  group data \"Data\" {\n",
-            "    node database \"Database\" {\n",
-            "      kind database\n",
-            "    }\n",
-            "  }\n\n",
-            "  edge api -> database \"SQL\" {\n",
-            "    kind data\n",
-            "  }\n",
-            "}\n",
-        );
+        let source = semantic_language_source();
         let catalog = CompletionCatalog {
             icons: vec![
                 CompletionCatalogEntry {
@@ -880,6 +1417,160 @@ mod tests {
             && output.items[0].label == "database"
             && output.items[0].detail.as_deref() == Some("node · Database")
             && output.items[0].sort_text == "0002:database"));
+    }
+
+    #[test]
+    fn hover_and_symbols_match_the_portable_semantic_fixture() {
+        let source = semantic_language_source();
+        let resolved = hover(
+            source,
+            7,
+            position_at_offset(source, 197).unwrap_or(SourcePosition::start()),
+        );
+        assert!(
+            matches!(resolved, Ok(ref output) if output.schema_version == "1.0"
+            && output.document_version == 7
+            && output.diagnostics.is_empty()
+            && matches!(output.hover, Some(ref value) if value.kind == HoverKind::Node
+                && value.range.start.byte_offset == 196
+                && value.range.end.byte_offset == 199
+                && value.label == "API"
+                && value.detail.as_deref() == Some("node api · service")
+                && value.documentation.is_none()))
+        );
+
+        let output = document_symbols(source, 7);
+        assert_eq!(output.schema_version, "1.0");
+        assert_eq!(output.document_version, 7);
+        assert!(output.diagnostics.is_empty());
+        assert_eq!(output.symbols.len(), 1);
+        let root = &output.symbols[0];
+        assert_eq!(root.name, "Checkout");
+        assert_eq!(root.kind, DocumentSymbolKind::Diagram);
+        assert_eq!(root.detail.as_deref(), Some("Stack 1.0 diagram"));
+        assert_eq!(root.range.start.byte_offset, 11);
+        assert_eq!(root.range.end.byte_offset, 239);
+        assert_eq!(root.selection_range.start.byte_offset, 19);
+        assert_eq!(root.selection_range.end.byte_offset, 29);
+        assert_eq!(root.children.len(), 3);
+
+        let api = &root.children[0];
+        assert_eq!(api.name, "API");
+        assert_eq!(api.kind, DocumentSymbolKind::Node);
+        assert_eq!(api.detail.as_deref(), Some("node api · service"));
+        assert_eq!(api.range.start.byte_offset, 48);
+        assert_eq!(api.range.end.byte_offset, 103);
+
+        let data = &root.children[1];
+        assert_eq!(data.name, "Data");
+        assert_eq!(data.kind, DocumentSymbolKind::Group);
+        assert_eq!(data.detail.as_deref(), Some("group data"));
+        assert_eq!(data.children.len(), 1);
+        assert_eq!(data.children[0].name, "Database");
+        assert_eq!(data.children[0].kind, DocumentSymbolKind::Node);
+        assert_eq!(
+            data.children[0].detail.as_deref(),
+            Some("node database · database")
+        );
+        assert_eq!(data.children[0].range.start.byte_offset, 131);
+        assert_eq!(data.children[0].range.end.byte_offset, 183);
+
+        let edge = &root.children[2];
+        assert_eq!(edge.name, "api -> database");
+        assert_eq!(edge.kind, DocumentSymbolKind::Edge);
+        assert_eq!(edge.detail.as_deref(), Some("forward edge · data"));
+        assert_eq!(edge.range.start.byte_offset, 191);
+        assert_eq!(edge.range.end.byte_offset, 237);
+        assert_eq!(edge.selection_range.start.byte_offset, 196);
+        assert_eq!(edge.selection_range.end.byte_offset, 211);
+    }
+
+    #[test]
+    fn hover_covers_declarations_properties_edges_layout_and_partial_documents() {
+        let source = concat!(
+            "stack 1.0\n\n",
+            "diagram \"System\" {\n",
+            "  theme dark\n",
+            "  node api \"API\" {\n",
+            "    kind service\n",
+            "    icon \"aws:lambda\"\n",
+            "    detail \"HTTP API\"\n",
+            "  }\n",
+            "  group outer \"Outer\" {\n",
+            "    node worker \"Worker\"\n",
+            "    group inner \"Inner\" {\n",
+            "      node db \"Database\" { kind database }\n",
+            "    }\n",
+            "    layout { direction right rank same [worker, db] order [inner, db] }\n",
+            "  }\n",
+            "  edge api <-> worker \"Events\" { kind event }\n",
+            "  edge worker -- db\n",
+            "  layout { direction down rank same [api, outer] order [outer, api] }\n",
+            "}\n",
+        );
+        let cases = [
+            ("\"System\"", 1, HoverKind::Diagram, "System"),
+            ("dark", 1, HoverKind::Property, "dark"),
+            ("api \"API\"", 1, HoverKind::Node, "API"),
+            ("\"API\"", 1, HoverKind::Node, "API"),
+            ("service", 1, HoverKind::Property, "service"),
+            ("aws:lambda", 1, HoverKind::Property, "aws:lambda"),
+            ("HTTP API", 1, HoverKind::Property, "HTTP API"),
+            ("outer \"Outer\"", 1, HoverKind::Group, "Outer"),
+            ("\"Inner\"", 1, HoverKind::Group, "Inner"),
+            ("right", 1, HoverKind::Property, "right"),
+            ("worker, db", 1, HoverKind::Node, "Worker"),
+            ("inner, db", 1, HoverKind::Group, "Inner"),
+            ("<->", 1, HoverKind::Edge, "Events"),
+            ("\"Events\"", 1, HoverKind::Edge, "Events"),
+            ("event", 1, HoverKind::Property, "event"),
+            ("--", 1, HoverKind::Edge, "worker -- db"),
+            ("down", 1, HoverKind::Property, "down"),
+            ("api, outer", 1, HoverKind::Node, "API"),
+            ("outer, api", 1, HoverKind::Group, "Outer"),
+        ];
+        for (needle, delta, kind, label) in cases {
+            let byte_offset = source.find(needle).map_or(0, |offset| offset + delta);
+            let output = hover(
+                source,
+                21,
+                position_at_offset(source, byte_offset).unwrap_or(SourcePosition::start()),
+            );
+            assert!(
+                matches!(output, Ok(ref value) if matches!(value.hover, Some(ref item) if item.kind == kind && item.label == label))
+            );
+        }
+
+        let invalid_position = hover(
+            source,
+            21,
+            SourcePosition {
+                byte_offset: 1,
+                line: 99,
+                column: 99,
+            },
+        );
+        assert_eq!(invalid_position, Err(IntelligenceError::InvalidPosition));
+
+        let syntax_invalid = "stack 1.0 diagram \"Partial\" { node api";
+        let unresolved = hover(
+            syntax_invalid,
+            22,
+            position_at_offset(syntax_invalid, 34).unwrap_or(SourcePosition::start()),
+        );
+        assert!(
+            matches!(unresolved, Ok(ref output) if output.hover.is_none()
+            && !output.diagnostics.is_empty())
+        );
+        let no_symbols = document_symbols(syntax_invalid, 22);
+        assert!(no_symbols.symbols.is_empty());
+        assert!(!no_symbols.diagnostics.is_empty());
+
+        let semantic_invalid =
+            "stack 1.0 diagram \"Duplicate\" { node same \"A\" node same \"B\" }";
+        let symbols = document_symbols(semantic_invalid, 23);
+        assert_eq!(symbols.symbols.len(), 1);
+        assert!(!symbols.diagnostics.is_empty());
     }
 
     #[test]
