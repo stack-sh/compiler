@@ -4,13 +4,15 @@
 
 The compiler does not resolve themes or icons, calculate layout, render SVG, access the network, or read files. Those concerns belong to downstream libraries and applications.
 
+Use this crate when embedding Stack parsing, validation, normalized IR, or protocol-neutral language intelligence in a Rust application. To create diagrams without building an integration, use the [Stack CLI](https://github.com/stack-sh/cli) or [browser Playground](https://stack-diagram.com/).
+
 ## Status
 
 Stack 1.0 and this compiler are both under active development. Public Rust APIs may change before the first stable release.
 
 Development and primary CI follow the latest stable Rust and Cargo releases through [`rust-toolchain.toml`](./rust-toolchain.toml). Rust 1.85 remains the minimum supported version and is verified in a separate CI job.
 
-## Cargo package
+## Use from Rust
 
 Add the compiler library from crates.io with:
 
@@ -20,7 +22,22 @@ cargo add stack-compiler@0.1.0
 
 The published package is built and documented on Rust 1.85 or newer. Repository CI performs a full crates.io packaging dry run so the released source archive remains independent of Git checkouts.
 
-Maintainers follow the [initial publication procedure](./docs/releasing.md) before the first registry release.
+Compile Stack source into renderer-independent normalized IR:
+
+```rust
+use stack_compiler::compile;
+
+fn main() {
+    let output = compile("stack 1.0 diagram \"API\" { node api \"API\" }");
+    assert!(output.diagnostics.is_empty());
+
+    if let Some(diagram) = output.diagram {
+        assert_eq!(diagram.title, "API");
+    }
+}
+```
+
+See the complete [`stack-compiler` API documentation](https://docs.rs/stack-compiler) for lossless parsing, source maps, diagnostics, and language-intelligence types.
 
 ## Pipeline
 
@@ -45,6 +62,8 @@ Stack source
 Install [`cargo-llvm-cov`](https://github.com/taiki-e/cargo-llvm-cov) before running the coverage command. CI measures the library unit tests independently and requires line, function, and region coverage to remain at or above 95 percent.
 
 Package-level Clippy lints reject panic-producing `unwrap`, `expect`, `panic`, `unreachable`, `todo`, and `unimplemented` calls in library and test targets.
+
+Maintainers follow the [Cargo release procedure](./docs/releasing.md) for registry releases.
 
 ## Conformance
 
