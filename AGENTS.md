@@ -32,6 +32,7 @@ The canonical language contract is `stack-sh/specification`. Never introduce syn
 - Keep GitHub Actions on their latest supported major versions; Dependabot checks for updates weekly.
 - Do not use panic-producing `unwrap`, `expect`, `panic`, `unreachable`, `todo`, or `unimplemented` macros in any target; package-level Clippy lints enforce this boundary.
 - Write repository content, code comments, issues, and pull requests in English.
+- Write pull request titles and bodies in English, and follow `.github/pull_request_template.md` without removing or renaming its sections.
 - Keep temporary implementation plans and task lists outside the repository under `/tmp`.
 
 ## Boundaries
